@@ -1,0 +1,75 @@
+data:
+  datasets:
+    - /home/erdurc/punkreas/segmentation/datasets/MSD
+  training:
+    batch_size: 1
+    #share: 250
+    shuffle: True
+  validation:
+    batch_size: 1
+    share: 31
+    shuffle: False
+  # test:
+  #   batch_size: 16
+  #   share: 0
+  #   shuffle: False
+  transform:
+    #CropToMask:
+      #margin: 10
+      #min_dim: [50, 50, 50]
+    Clip:
+      amin: -150
+      amax: 250
+    Normalize:
+      bounds:
+      - -150
+      - 250
+    # Pad:
+    #   output_shape:
+    #   - 271
+    #   - 271
+    #   - 271
+    Resize:
+      output_shape:
+      - 256
+      - 256
+      - z
+      
+    # # Albumentation:
+    #   name: HorizontalFlip
+    #   p: 0.5
+    # Albumentation:
+    #   name: VerticalFlip
+    #   p: 0.5
+    # Albumentation:
+    #   name: RandomRotate90
+    #   p: 0.5
+    # Albumentation:
+    #   name: GridDistortion
+    #   p: 0.5
+    # Albumentation:
+    #   name: ElasticTransform
+    #   p: 0.5
+loss:
+  BCELoss: {}
+metrics:
+  Accuracy:
+    num_classes: 1
+  Recall: {}
+  Precision: {}
+  F1: {}
+  AUROC:
+    num_classes: 1
+  ConfusionMatrix:
+    num_classes: 2
+  Specificity: {}
+model:
+  ResNet10: {}
+num_epochs: 100
+optimizer:
+  Adam:
+    lr: 1.e-4
+    weight_decay: 1.e-4
+result_folder: "../results"
+log_folder: "../logs"
+seed: 0

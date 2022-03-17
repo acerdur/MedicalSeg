@@ -4,6 +4,7 @@ Important setup functions that are used in the training script
 import os
 import yaml
 import torch
+import glob
 import numpy as np
 #from skimage.transform import resize
 from scipy import ndimage
@@ -15,7 +16,7 @@ from torch.optim import lr_scheduler
 import models
 from punkreas import transform, optimizer
 from data import SegmentationDataset, DatasetComposition
-
+from pretraining_2D.model import LightningSegmentation, LightningClassifierLSTM
 
 
 
@@ -120,7 +121,7 @@ def get_scheduler(opt, optimizer):
     """
     if opt.lr_policy == 'linear':
         def lambda_rule(epoch):
-            lr_l = 1.0 - max(0, epoch + opt.epoch_count - opt.n_epochs) / float(opt.n_epochs_decay + 1)
+            lr_l = 1.0 - max(0, epoch - opt.n_epochs) / float(opt.n_epochs_decay + 1)
             return lr_l
 
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda_rule)
@@ -144,7 +145,7 @@ def get_optimizer(opt, parameters):
 
     """
     params = [
-            { 'params': parameters['base_parameters'], 'lr': opt.lr/100, 'weight_decay': opt.weight_decay }, 
+            { 'params': parameters['base_parameters'], 'lr': opt.lr/10, 'weight_decay': opt.weight_decay }, 
             { 'params': parameters['new_parameters'], 'lr': opt.lr, 'weight_decay': opt.weight_decay }
             ]
     # add the momentum value to the parameter dictionaries
@@ -217,6 +218,31 @@ def get_dataloaders(opt):
 
     return train_loader, val_loader
     
+def get_pre_classifier(opt):
+    device = torch.device('cuda:{}'.format(opt.gpu_ids[0])) if opt.gpu_ids else torch.device('cpu') 
+    ckpt_pth = glob.glob(os.path.join(opt.classifier_weight_folder, "*.ckpt"))[0]
+    model_type = LightningClassifierLSTM if 'lstm' in ckpt_pth else LightningSegmentation
+    model_info = ckpt_pth.split('/')[-1].split('_')
+    model_architecture = model_info[1]
+    model_name = model_info[2]
+    loss_name = 'cross_entropy' if 'classification' in ckpt_pth else 'dice'    
+    model = model_type.load_from_checkpoint(
+        ckpt_pth,
+        map_location=device,
+        hparams={},
+        model_architecture=model_architecture,
+        model=model_name,
+        loss_name=loss_name,
+        freeze_layers_in_beginning=False,
+        use_imagenet_weights=True,
+        classification=True
+    )
+    model = model.to(device)
+    for parameter in model.parameters():
+        parameter.requires_grad = False
+
+    return model
+
 
 def prepare_for_loss(opt,outputs,targets):
     

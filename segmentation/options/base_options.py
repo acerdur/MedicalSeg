@@ -42,7 +42,7 @@ class BaseOptions():
         medicalnet.add_argument('--input_W', default=256, type=int, help='Input size of width')
         medicalnet.add_argument('--num_seg_classes', default=2, type=int, help='Number of segmentation classes')
           # MonAI networks parameters
-        monainet.add_argument('--model', default='unet', type=str, help='Which MonAI network ( UNet | UNetR | SegResNet)')
+        monainet.add_argument('--model', default='UNet', type=str, help='Which MonAI network, Uppercase sensitive ( UNet | UNetR | SegResNet)')
         
         # dataset parameters
         parser.add_argument('--data_config', required=True, help='path to .yaml file which contains data configuration')

@@ -7,6 +7,7 @@ import random
 from tqdm import tqdm
 from typing import Any, Type, Union, Optional
 from PIL import Image
+from copy import deepcopy
 
 import numpy as np
 import torch
@@ -102,18 +103,20 @@ class SegmentationDataset(Dataset):
         # Save transformation and dtypes as private attribute
         self._transform = transform
         self._scan_dtype = scan_dtype
+        self._label_dtype = label_dtype
 
         # Filter transformations for mask images ang generate compose class
-        mask_acceptable_transforms = ['Resize', 'Pad', 'Crop'] # crop class does not exist yet - necessary?
+        mask_acceptable_transforms = ['Resize', 'Pad', 'Crop', 'ToReferencePosition'] # crop class does not exist yet - necessary?
         
         # Prepare transformation instances on the dataset
         if self._transform:
             self._mask_transform = Compose([ 
-            transform for transform in self._transform._transformations if str(transform) in mask_acceptable_transforms
+            deepcopy(transform) for transform in self._transform._transformations if str(transform) in mask_acceptable_transforms
             ])
             self._transform.prepare(self)
-            self._mask_transform.prepare(self)
+            self._mask_transform.prepare(self,order=0) # change the interpolation order on mask resizing
 
+        #import pdb; pdb.set_trace()
     def __len__(self) -> int:
         """Get the size of the dataset.
 
@@ -135,12 +138,9 @@ class SegmentationDataset(Dataset):
 
         # Select the sample
         scan = ScanImage.from_path(self.scans[idx], dtype=self._scan_dtype)
-        mask = MaskImage.from_path(self.masks[idx], dtype=bool) 
-        # first load mask as boolean, for correct resize order and etc. 
-        # this will not harm the mask as any value larger than 1 will be load as True, 
-        # same as merging the masks
-
-        import pdb; pdb.set_trace()
+        mask = MaskImage.from_path(self.masks[idx], dtype=self._label_dtype) 
+        # segmentation masks are not merged, i.e., loaded as {void, pancreas, tumor} labels
+        #import pdb; pdb.set_trace()
 
 
         # Apply transformation to scan & mask images
@@ -148,7 +148,11 @@ class SegmentationDataset(Dataset):
             self._transform(scan, idx)
             self._mask_transform(mask, idx)
 
-        import pdb; pdb.set_trace()
+        # integrated into punkreas transforms
+        #scan.array = SegmentationDataset2D.rotate_and_flip(scan.array)
+        #mask.array = SegmentationDataset2D.rotate_and_flip(mask.array) 
+
+        #import pdb; pdb.set_trace()
         # Tranform to pytorch tensor
         torch_scan = scan.to_torch() #.transpose(1,3) # change to DHW format
         torch_mask = mask.to_torch().to(torch.long) #.transpose(0,2) # change masks back to integer
@@ -199,7 +203,7 @@ class SegmentationDataset2D(Dataset):
         self._load_transfrom = loading_transform
         
         # Filter transformations for mask images ang generate compose class
-        mask_acceptable_transforms = ['Resize', 'Pad', 'Crop'] # crop class does not exist yet - necessary?
+        mask_acceptable_transforms = ['Resize', 'Pad', 'Crop', 'ToReferencePosition'] # crop class does not exist yet - necessary?
         
         # Prepare transformation instances on the dataset
         if self._transform:
@@ -473,7 +477,7 @@ if __name__ == '__main__':
     transformations = [None]
     #dataset = SegmentationDataset2D(dataroot=dataroot, transform=transformations[0], mode='classification', output_type='single', is_train=False)
     # import pdb; pdb.set_trace()
-    dataset1 = SegmentationDataset2D(dataroot=dataroot, creation_transform=transformations[0], mode='segmentation', output_type='sequence', is_train=True)
+    dataset1 = SegmentationDataset2D(dataroot=dataroot, creation_transform=transformations[0], mode='segmentation', output_type='sequence', is_train=False)
     import pdb; pdb.set_trace()
     # dataset = SegmentationDataset2D(dataroot=dataroot, transform=transformations[0], mode='classification', output_type='sequence', is_train=False)
     # import pdb; pdb.set_trace() 

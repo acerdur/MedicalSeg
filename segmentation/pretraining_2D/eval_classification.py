@@ -9,7 +9,7 @@ from matplotlib import pyplot as plt
 from tqdm import tqdm
 #from segmentation_models_pytorch import Unet
 from segmentation_models_pytorch import utils
-from models import LightningClassifierLSTM, LightningSegmentation
+from model import LightningClassifierLSTM, LightningSegmentation
 import util
 
 import sys
@@ -19,7 +19,7 @@ from data import SegmentationDataset2D, DatasetComposition
 
    
 # %%
-ckpt_name = "/home/erdurc/punkreas/segmentation/2D_pretraining/models/model_ckpt_deeplabv3plus_resnet50_classification_lstm_2022-03-02_15-29/best_deeplabv3plus_resnet50_classification_lstm_2022-03-02_15-29.ckpt"
+ckpt_name = "/home/erdurc/punkreas/segmentation/pretraining_2D/models/model_ckpt_deeplabv3plus_resnet50_classification_lstm_2022-03-03_09-18/best_deeplabv3plus_resnet50_classification_lstm_2022-03-03_09-18.ckpt"
 model_info = ckpt_name.split('/')[-1].split('_')
 model_architecture = model_info[1]
 model_name = model_info[2]
@@ -42,7 +42,7 @@ if use_lstm:
         use_imagenet_weights=True,
     )
 else:
-    model = LightningClassifierLSTM.load_from_checkpoint(
+    model = LightningSegmentation.load_from_checkpoint(
         f"./models/model_ckpt_{experiment_name}/best_{experiment_name}.ckpt",
         map_location=devices,
         hparams=hparams,
@@ -51,6 +51,7 @@ else:
         loss_name=loss_name,
         freeze_layers_in_beginning=False,
         use_imagenet_weights=True, #setting this true is important for model structure, weights will be overriden by ckpt
+        classification=True
     )
 
 model.eval()
@@ -71,9 +72,10 @@ val = SegmentationDataset2D(
     output_type= 'sequence' if use_lstm else 'single',
     is_train=False
 )
-import pdb; pdb.set_trace()
-dataloader = DataLoader(val, batch_size=1, shuffle=False)
 
+dataloader = DataLoader(val, batch_size=1, shuffle=False)
+aa = next(iter(dataloader))
+import pdb; pdb.set_trace()
 # %%
 # %%
 test_epoch = utils.train.ValidEpoch(

@@ -18,33 +18,32 @@ from punkreas.data import Dataset
 from punkreas.data import ScanImage, MaskImage
 from punkreas.transform import Compose
 
-def random_transform_image_and_mask(img, mask, transforms: [Optional[list[str]]]):
+def random_transform_image_and_mask(img, mask, transforms: [Optional[dict]]):
     """
     Apply identical transformations to the image and its mask.
 
     Arguments:
         img:            torch.Tensor
         mask:           torch.Tensor
-        transforms:     list(str) or None - Name of the transformations to be applied
+        transforms:     dict or None - Name of the transformations to be applied
     """
     if not transforms:
         return img, mask
     else:
-        if ('resize') in transforms:
-            pass
-            # TODO: how to pass resize params
-            #img = TF.resize()
-            #mask = TF.resize()
+        if 'resize' in transforms.keys():
+            new_size = transforms['resize']
+            img = TF.resize(img, size=new_size, interpolation=torchvision.transforms.InterpolationMode.BILINEAR)
+            mask = TF.resize(mask, size=new_size, interpolation=torchvision.transforms.InterpolationMode.NEAREST)
 
-        if ('hflip' in transforms) and (random.random() > 0.5):
+        if ('hflip' in transforms.keys()) and (random.random() > 0.5):
             img = TF.hflip(img)
             mask = TF.hflip(mask)
         
-        if ('vflip' in transforms) and (random.random() > 0.5):
+        if ('vflip' in transforms.keys()) and (random.random() > 0.5):
             img = TF.vflip(img)
             mask = TF.vflip(mask)
 
-        if ('rotate' in transforms) and (random.random() > 0.5):
+        if ('rotate' in transforms.keys()) and (random.random() > 0.5):
             angle = random.randint(-90,90)
             img = TF.rotate(img, angle=angle, interpolation=torchvision.transforms.InterpolationMode.BILINEAR)
             mask = TF.rotate(mask, angle=angle, interpolation=torchvision.transforms.InterpolationMode.NEAREST)
@@ -140,8 +139,9 @@ class SegmentationDataset(Dataset):
         scan = ScanImage.from_path(self.scans[idx], dtype=self._scan_dtype)
         mask = MaskImage.from_path(self.masks[idx], dtype=self._label_dtype) 
         # segmentation masks are not merged, i.e., loaded as {void, pancreas, tumor} labels
-        #import pdb; pdb.set_trace()
 
+
+        #scan_name = self.scans[idx].split('/')[-1]
 
         # Apply transformation to scan & mask images
         if self._transform:
@@ -157,7 +157,7 @@ class SegmentationDataset(Dataset):
         torch_scan = scan.to_torch() #.transpose(1,3) # change to DHW format
         torch_mask = mask.to_torch().to(torch.long) #.transpose(0,2) # change masks back to integer
 
-        return torch_scan, torch_mask
+        return torch_scan, torch_mask, self.scans[idx]
 
     
 
@@ -168,23 +168,25 @@ class SegmentationDataset2D(Dataset):
         creation_transform: "Transform" = None,
         loading_transform: "Transform" = None,
         mode: str = 'segmentation',
+        merge_masks: bool = False,
         output_type: str = 'single',
         temporal: int = 4,
         is_train: bool = True,
-        indices_3d: list = None
+        indices_3d: list = None,
+        force_create: bool = False,
     ) -> None:
         """Create a medical image classification dataset from scans and labels.
 
         Args:
             scans: List of paths to the medical scans.
-            labels: List of the labels corresponding to the medical scans.
             creation_transform: Transformation applied to the 3D scans before building the 2D dataset.
             loading_transform: Transformation applied to the 2D images before loading to the model. Can be data augmentations.
             scan_dtype: Data type of scan data.
             label_dtype: Data type of label data.
             masks: Paths to masks corresponding the medical scans.
             mode: Pixel-wise ''segmentation' or slice 'classification'
-            output: 'Single' image output for 2D or 'sequnce' for 2.5D models
+            merge_masks: Gather pancreas and tumor labels together as pancreas
+            output_type: 'Single' image output for 2D or 'sequnce' for 2.5D models
             temporal: Sequence length of input for 2.5D model
             is_train: For 2.5D models, whether the output should be a random sequence 
                 of 'temporal' length, or the whole scan 
@@ -196,29 +198,34 @@ class SegmentationDataset2D(Dataset):
         self.output_type = output_type
         self.temporal = temporal
         self.is_train = is_train
+        self.merge_masks = merge_masks
+
+        if self.mode == 'classification':
+            # remove redundant operation in __getitem__
+            self.merge_masks = False
 
         # Save transformation and dtypes as private attribute
-        self._transform = creation_transform
-        self._mask_transform = None
+        self._transform3d = creation_transform
+        self._mask_transform3d = None
         self._load_transfrom = loading_transform
         
         # Filter transformations for mask images ang generate compose class
         mask_acceptable_transforms = ['Resize', 'Pad', 'Crop', 'ToReferencePosition'] # crop class does not exist yet - necessary?
         
-        # Prepare transformation instances on the dataset
-        if self._transform:
-            self._mask_transform = Compose([ 
-            transform for transform in self._transform._transformations if str(transform) in mask_acceptable_transforms
+        # Prepare transformation instances on the 3D dataset
+        if self._transform3d:
+            self._mask_transform3d = Compose([ 
+            deepcopy(transform) for transform in self._transform3d._transformations if str(transform) in mask_acceptable_transforms
             ])
-            self._transform.prepare(self)
-            self._mask_transform.prepare(self)
+            self._transform3d.prepare(self)
+            self._mask_transform3d.prepare(self,order=0) # change the interpolation order on mask resizing
 
         if self._load_transfrom:
-            self._load_transfrom = [t.lower() for t in self._load_transfrom]
-            for t in self._load_transfrom:
-                assert t in ['rotate', 'hflip', 'vflip','resize']
+            self._load_transfrom = {k.lower():v for k,v in self._load_transfrom.items()}
+            for t in self._load_transfrom.keys():
+                assert t in ['rotate', 'hflip', 'vflip', 'resize']
 
-        self.scan_paths, self.mask_paths, self.scan_names = SegmentationDataset2D.create_2d_dataset(self.dataroot, [self._transform, self._mask_transform], indices=indices_3d)
+        self.scan_paths, self.mask_paths, self.scan_names = SegmentationDataset2D.create_2d_dataset(self.dataroot, [self._transform3d, self._mask_transform3d], force=force_create, indices=indices_3d)
         
         ## regroup paths into nested lists for sequence case
         if self.output_type == 'sequence':
@@ -276,19 +283,26 @@ class SegmentationDataset2D(Dataset):
         if self.output_type == 'single':
             img, mask = Image.open(slice_path), Image.open(mask_path)
             torch_slice = torchvision.transforms.ToTensor()(img) # 1 x H x W
-            torch_mask = torchvision.transforms.ToTensor()(mask).to(torch.uint8) # # 1 x H x W
+            torch_mask = torchvision.transforms.ToTensor()(mask) # # 1 x H x W
+            scan_name = slice_path.split('/')[-1].split('_')[0]
         else:
             imgs = [torchvision.transforms.ToTensor()(Image.open(pth)) for pth in slice_path]
             masks = [torchvision.transforms.ToTensor()(Image.open(pth)) for pth in mask_path]
             torch_slice = torch.cat(imgs,dim=0).unsqueeze(1) # temporal x 1 x H x W
-            torch_mask = torch.cat(masks,dim=0).to(torch.uint8) # temporal x H x W
+            torch_mask = torch.cat(masks,dim=0) # temporal x H x W
+            scan_name = slice_path[0].split('/')[-1].split('_')[0]
+        
+        torch_mask = torch.round(torch_mask*2).to(int)
 
         torch_slice, torch_mask = random_transform_image_and_mask(torch_slice, torch_mask, self._load_transfrom)
+
+        if self.merge_masks:
+            torch_mask = torch.where(torch_mask != 0, 1, torch_mask)
 
         if self.mode == 'classification':
             torch_mask = SegmentationDataset2D.mask_to_label(torch_mask) # temporal x 1 
         
-        return torch_slice, torch_mask
+        return torch_slice, torch_mask, scan_name
 
     @staticmethod
     def get_slice_images(scan, mask):
@@ -326,7 +340,7 @@ class SegmentationDataset2D(Dataset):
         return array
 
     @staticmethod
-    def mask_to_label(mask) -> np.array:
+    def mask_to_label(mask) -> torch.Tensor:
         """
         Gather the segmentation mask of the slice to a binary scalar label. 
         Means, if there is at least one pixel equal to 1, whole slice is labeled as 1 
@@ -335,9 +349,9 @@ class SegmentationDataset2D(Dataset):
         Works for both for whole 3D masks or a single 2D slice.
 
         Arguments:
-            slice: np.array, if 3D must be DHW format
+            slice: torch.Tensor, if 3D must be DHW format
         Return:
-            np.array
+            torch.Tensor
         """
         if len(mask.shape) == 2:
             mask = mask.unsqueeze(0) #np.expand_dims(mask, axis=2) 
@@ -406,44 +420,44 @@ class SegmentationDataset2D(Dataset):
                 scan_name = pth.split('/')[-1].split('.')[0]
 
                 scan =  ScanImage.from_path(pth, dtype=np.float32)
-                mask = MaskImage.from_path(mask_paths_3d[i], dtype=bool) 
+                mask = MaskImage.from_path(mask_paths_3d[i], dtype=np.int64) 
                 
                 if transforms:
                     transforms[0](scan, i)
                     transforms[1](mask, i) 
-
-                scan.array = cls.rotate_and_flip(scan.array)
-                mask.array = cls.rotate_and_flip(mask.array) 
+                
+                #integrated into punkreas transforms
+                # scan.array = cls.rotate_and_flip(scan.array)
+                # mask.array = cls.rotate_and_flip(mask.array) 
 
                 # only contain regions where the scan is nonzero
                 h,w,d = scan.shape
                 zero_vol = np.zeros((h,w,1))
                 no_zero_start = 0 
-                for i in range(d):
-                    if not (scan.array[:,:,i] == zero_vol).all():
-                        no_zero_start = i
+                for d_i in range(d):
+                    if not (scan.array[:,:,d_i] == zero_vol).all():
+                        no_zero_start = d_i
                         break
                 no_zero_end = 0
-                for i in range(no_zero_start, d):
-                    if not (scan.array[:,:,i] == zero_vol).all():
+                for d_i in range(no_zero_start, d):
+                    if not (scan.array[:,:,d_i] == zero_vol).all():
                         no_zero_end += 1
                 scan.array = scan.array[:,:,no_zero_start:no_zero_end]
-                mask.array = mask.array.astype(int)
                 mask.array = mask.array[:,:,no_zero_start:no_zero_end]
 
+                mask.array = (mask.array - mask.min()) / (mask.max() + mask.min()) #normalize into [0,1] range
+
                 slices, masks = cls.get_slice_images(scan.array, mask.array)
-                for i, slc in enumerate(slices):
+                for j, slc in enumerate(slices):
                     slc = (slc * 255).astype("uint8")
                     slc = Image.fromarray(slc.squeeze(2),mode='L')
-                    slc.save(os.path.join(images_2d_root, f"{scan_name}_slice{i + 1}.png"),'PNG')
-                    img_paths.append(os.path.join(images_2d_root, f"{scan_name}_slice{i + 1}.png"))
-                    msk = (masks[i] * 255).astype("uint8")
+                    slc.save(os.path.join(images_2d_root, f"{scan_name}_slice{j + 1}.png"),'PNG')
+                    img_paths.append(os.path.join(images_2d_root, f"{scan_name}_slice{j + 1}.png"))
+                    msk = (masks[j] * 255).astype("uint8")
                     msk = Image.fromarray(msk.squeeze(2),mode='L')
-                    msk.save(os.path.join(masks_2d_root, f"{scan_name}_slice{i + 1}.png"),'PNG')
-                    mask_paths.append(os.path.join(masks_2d_root, f"{scan_name}_slice{i + 1}.png"))
+                    msk.save(os.path.join(masks_2d_root, f"{scan_name}_slice{j + 1}.png"),'PNG')
+                    mask_paths.append(os.path.join(masks_2d_root, f"{scan_name}_slice{j + 1}.png"))
 
-                #scan_data.extend(slices)
-                #mask_data.extend(masks)
 
         else:
             print("*"*10 + f"  Dataset exists. Loading from {os.path.join(dataroot, '2D')}  " + "*"*10)
@@ -475,7 +489,7 @@ if __name__ == '__main__':
     #     Compose([getattr(transform,name)(**options) for name,options in transforms.items()])
     #     ]
     transformations = [None]
-    #dataset = SegmentationDataset2D(dataroot=dataroot, transform=transformations[0], mode='classification', output_type='single', is_train=False)
+    dataset = SegmentationDataset2D(dataroot=dataroot, creation_transform=transformations[0], mode='classification', output_type='single', is_train=False)
     # import pdb; pdb.set_trace()
     dataset1 = SegmentationDataset2D(dataroot=dataroot, creation_transform=transformations[0], mode='segmentation', output_type='sequence', is_train=False)
     import pdb; pdb.set_trace()

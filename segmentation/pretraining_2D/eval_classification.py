@@ -19,7 +19,7 @@ from data import SegmentationDataset2D, DatasetComposition
 
    
 # %%
-ckpt_name = "/home/erdurc/punkreas/segmentation/pretraining_2D/models/model_ckpt_deeplabv3plus_resnet50_classification_lstm_2022-03-03_09-18/best_deeplabv3plus_resnet50_classification_lstm_2022-03-03_09-18.ckpt"
+ckpt_name = "/home/erdurc/punkreas/segmentation/pretraining_2D/models/model_ckpt_deeplabv3plus_resnet50_classification_lstm_2022-03-23_15-29/best_deeplabv3plus_resnet50_classification_lstm_2022-03-23_15-29.ckpt"
 model_info = ckpt_name.split('/')[-1].split('_')
 model_architecture = model_info[1]
 model_name = model_info[2]
@@ -67,6 +67,7 @@ val_indices = load('/home/erdurc/punkreas/segmentation/checkpoints/medical_resne
 val = SegmentationDataset2D(
     dataroot="/home/erdurc/punkreas/segmentation/datasets/MSD",
     creation_transform=None,
+    loading_transform={'resize': [256,256]},
     indices_3d=val_indices.tolist(),
     mode='classification',
     output_type= 'sequence' if use_lstm else 'single',

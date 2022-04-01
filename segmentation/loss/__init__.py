@@ -8,7 +8,7 @@ def get_loss(opt):
     elif opt.loss_function == 'dice':
         loss_fn = DiceLoss(to_onehot_y=True, sigmoid=True) 
     elif opt.loss_function == 'dice_cross_entropy':
-        loss_fn = DiceCELoss(include_background=False, to_onehot_y=True, sigmoid=True) #sigmoid only for dice loss 
+        loss_fn = DiceCELoss(include_background=False, to_onehot_y=True, softmax=True) #sigmoid only for dice loss 
     else:
         raise NotImplementedError('Specified loss_function {} is not known.'.format(opt.loss_function))
 

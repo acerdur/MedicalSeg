@@ -19,6 +19,7 @@ from tqdm import tqdm
 from monai.metrics import DiceMetric
 from monai.transforms import Compose, AsDiscrete, Activations
 from monai.inferers import sliding_window_inference 
+from monai.data import decollate_batch
 
 def save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score, filename=''):
     model_name = type(model.module).__name__.lower()
@@ -49,7 +50,7 @@ def save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score, filena
 def load_checkpoints(opt, model, optimizer, scheduler):
     model_name = type(model.module).__name__.lower()
     load_dir = os.path.join(opt.checkpoints_dir, opt.name)
-    load_path = os.path.join(load_dir,f"{model_name}_ckpt_{opt.epoch_count}.pth")
+    load_path = os.path.join(load_dir,f"{model_name}_ckpt_{opt.epoch}.pth")
 
     device = torch.device('cuda:{}'.format(opt.gpu_ids[0])) if opt.gpu_ids else torch.device('cpu') 
     
@@ -67,37 +68,42 @@ def load_checkpoints(opt, model, optimizer, scheduler):
     best_score = checkpoint['best_score']
     epoch = checkpoint['epoch']
 
+    scheduler.step() #update lr from the loaded checkpoint
+
     return model, optimizer, scheduler, epoch, best_score
 
 def evaluate(dataloader, model, preclassifier, metric, post_trans_pred, post_trans_lbl, opt):
     for i, data in enumerate(tqdm(dataloader)):
-        scans, label_masks = data
+        scans, label_masks, scan_paths = data
 
         if not opt.no_cuda:
             scans = scans.cuda()
             label_masks = label_masks.cuda()
 
-        if not opt.baseline == 'monainet':
-                scans = scans.permute(0,1,4,2,3)
-                label_masks = label_masks.permute(0,3,1,2)
+        
 
         with torch.no_grad():
-            #slice_crop_mask = preclassifier.soft_pred(scans.permute(0,4,1,2,3), window_size_mult_of=8).flatten().to(bool)
-            #scans, label_masks = scans[:,:,:,:,slice_crop_mask], label_masks[:,:,:,slice_crop_mask]
-            #preds, label_masks = model.module.inference(scans, label_masks)
-            preds = sliding_window_inference(
-                inputs=scans,
-                roi_size=(512,512,256),
-                sw_batch_size=1,
-                predictor=model,
-                overlap=0,
-            )
-            preds = post_trans_pred(preds)
-            label_masks = post_trans_lbl(label_masks)
-            metric(preds, label_masks.unsqueeze(0))
+            slice_crop_mask = preclassifier.soft_pred(scans.permute(0,4,1,2,3), window_size_mult_of=opt.wind_size_mult_of).flatten().to(bool)
+            scans, label_masks = scans[:,:,:,:,slice_crop_mask], label_masks[:,:,:,slice_crop_mask]
+            
+            if not opt.baseline == 'monainet':
+                scans = scans.permute(0,1,4,2,3)
+                label_masks = label_masks.permute(0,3,1,2)
+            
+            preds, label_masks = model.module.inference(scans, label_masks)
+            # preds = sliding_window_inference(
+            #     inputs=scans,
+            #     roi_size=(512,512,256),
+            #     sw_batch_size=1,
+            #     predictor=model,
+            #     overlap=0,
+            # )
+            preds = [post_trans_pred(pred) for pred in decollate_batch(preds)]
+            label_masks = [post_trans_lbl(label_mask) for label_mask in decollate_batch(label_masks)]
+            metric(preds, label_masks)
             
     metric_per_class = metric.aggregate().flatten()
-    mean_metric= metric_per_class.mean().item()
+    mean_metric= metric_per_class[1:].mean().item()
 
     return metric_per_class, mean_metric
 
@@ -118,7 +124,7 @@ def train(train_loader,
     max_num_iters = total_epochs * batches_per_epoch
     log.info(f"{total_epochs} epochs in total, {batches_per_epoch} batches per epoch.")
 
-    post_trans_pred = Compose([Activations(sigmoid=True), AsDiscrete(threshold=0.5)])
+    post_trans_pred = Compose([AsDiscrete(argmax=True, to_onehot=3)]) #[Activations(sigmoid=True), AsDiscrete(threshold=0.5)])
     post_trans_lbl = Compose([AsDiscrete(to_onehot=3)])
 
     if opt.continue_train:
@@ -148,7 +154,7 @@ def train(train_loader,
 
         for batch_id, batch_data in enumerate(train_loader):
             iter_start_time = time.time()
-            scans, label_masks = batch_data
+            scans, label_masks, scan_paths = batch_data
 
             total_iters += 1
             epoch_iter += 1
@@ -159,24 +165,36 @@ def train(train_loader,
 
             #import pdb; pdb.set_trace()
             with torch.no_grad():
-                slice_crop_mask = pre_classifier.soft_pred(scans.permute(0,4,1,2,3), window_size_mult_of=16).flatten().to(bool)
+                slice_crop_mask = pre_classifier.soft_pred(scans.permute(0,4,1,2,3), window_size_mult_of=opt.wind_size_mult_of).flatten().to(bool)
             #slice_lbl = torch.any(torch.any(label_masks,dim=1),dim=1).to(int)
 
             scans = scans[:,:,:,:,slice_crop_mask]
             label_masks = label_masks[:,:,:,slice_crop_mask]
             #import pdb; pdb.set_trace()
+
+            if (scans.shape[-1] % opt.wind_size_mult_of) != 0:
+            # in some rare cases (and not happening deterministically always? e.g. happens at epoch 63) 
+            # the window takes the whole scan, which has a shape incompatible with MonAI nets (e.g. 44 when it should be 48)
+            # apply a small 0 padding trick for compatibility
+                size_diff = int(round(scans.shape[-1] / opt.wind_size_mult_of) * opt.wind_size_mult_of) - scans.shape[-1]
+                scans = torch.nn.functional.pad(scans,(0,size_diff))
+                label_masks = torch.nn.functional.pad(label_masks,(0,size_diff))
             
             if not opt.baseline == 'monainet':
                 scans = scans.permute(0,1,4,2,3)
                 label_masks = label_masks.permute(0,3,1,2)
 
             optimizer.zero_grad()
-            out_masks = model(scans)
+            try:
+                out_masks = model(scans)
+            except Exception as e:
+                print(e)
+                import pdb; pdb.set_trace()
 
             #import pdb; pdb.set_trace()
-            out_masks, new_label_masks = prepare_for_loss(opt, out_masks, label_masks)
+            out_masks, label_masks = prepare_for_loss(opt, out_masks, label_masks)
             #import pdb; pdb.set_trace()
-            loss = loss_fn(out_masks, new_label_masks)
+            loss = loss_fn(out_masks, label_masks)
             #import pdb; pdb.set_trace()
 
             loss.backward()
@@ -214,6 +232,7 @@ def train(train_loader,
 
                 if mean_metric > best_score:
                     best_score = mean_metric
+                    monitoring = 0
                     save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score, filename='best_model.pth')
 
                 else:
@@ -225,6 +244,7 @@ def train(train_loader,
                         break
 
         if break_training:
+            #save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score, filename='latest_model.pth')
             break 
         #scheduler step at the end of epoch
         scheduler.step()
@@ -234,8 +254,9 @@ def train(train_loader,
 
         log.info(f"End of epoch {epoch} \t Time Taken: {time.time() - epoch_start_time} sec")
     
+    save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score, filename='latest_model.pth')
     log.info(f"End of training \t Time Taken: {time.time() - train_start_time} sec")
-
+    
 
 if __name__ == '__main__':
     random.seed(42)

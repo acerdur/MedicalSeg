@@ -11,10 +11,12 @@ class TrainOptions(BaseOptions):
         parser = BaseOptions.initialize(self, parser)
         # transfer learning, pretrained networks - different than training continue
         parser.add_argument('--pretrain_path', type=str, default='', help='Path to .pth file containing pretrained model.')
-        parser.add_argument('--new_layer_names', default=['conv_seg'], type=list, help='Unfrozen layers, that will have the specified learning rate. lr for other layers will be divided by 100.')
+        parser.add_argument('--new_layer_names', default=['all'], type=list, help='Unfrozen layers, that will have the specified learning rate. lr for other layers will be divided by 100. Set ["all"] to consider all layers as new.')
 
         # 2D pre-classification model parameters
+        parser.add_argument('--no_pre_cropping', action='store_true', help='Do not use 2.5D LSTM classifier to crop scans into a ROI containing pancreas')
         parser.add_argument('--classifier_weight_folder', type=str, help='Path to the file containing trained weights of 2D pre-classifier.')
+        parser.add_argument('--wind_size_mult_of', type=int, default=16, help='The prediction window of 2D pre-classifier should be a multiple of this.')
         
         # network saving and loading parameters
         #parser.add_argument('--save_latest_freq', type=int, default=5000, help='frequency of saving the latest results')
@@ -29,8 +31,8 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--loss_function', type=str, default='dice_cross_entropy', help='Loss function to use ( cross_entropy | dice | dice_cross_entropy')
         parser.add_argument('--optimizer', type=str, default='Adam', help='Which optimizer to use ( SGD | Adam | AdamW )')
         parser.add_argument('--betas', nargs='+' ,type=float, default=[0.9, 0.99], help='Momentum values for optimizer.')
-        parser.add_argument('--lr', type=float, default=0.01, help='initial learning rate for new parameters')
-        parser.add_argument('--weight_decay', type=float, default=0.001, help='weight decay for optimizers')
+        parser.add_argument('--lr', type=float, default=0.001, help='initial learning rate for new parameters')
+        parser.add_argument('--weight_decay', type=float, default=1e-5, help='weight decay for optimizers')
         parser.add_argument('--lr_policy', type=str, default='linear', help='learning rate policy. [linear | step | plateau | cosine]')
         parser.add_argument('--lr_decay_iters', type=int, default=50, help='multiply by a gamma every lr_decay_iters iterations (step policy)')
         parser.add_argument('--val_freq', type=int, default=250, help='Validation frequency by iteration')

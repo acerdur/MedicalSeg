@@ -24,6 +24,7 @@ class BaseOptions():
         subparsers = parser.add_subparsers(help='sub-commands for different models', dest='baseline')
         medicalnet = subparsers.add_parser('medicalnet', help='use MedicalNet ResNet')
         monainet = subparsers.add_parser('monainet', help='use MonAI networks ')
+        lstm2d = subparsers.add_parser('lstm2d', help='use LSTM based 2.5D segmentation net. Only available for eval')
 
         # basic parameters
         parser.add_argument('--name', type=str, default='experiment_name', help='name of the experiment. It decides where to store samples and models')
@@ -34,15 +35,17 @@ class BaseOptions():
         parser.add_argument('--init_type', type=str, default='normal', help='network initialization ( normal | xavier | kaiming | orthogonal )')
         parser.add_argument('--init_gain', type=float, default=0.02, help='scaling factor for normal, xavier and orthogonal.')
         parser.add_argument('--memory_format', type=str, default='channels_first', help=' ( channels_first, channels_last ) ')
-          # parameters only for MedicalNet ResNet
+            # parameters only for MedicalNet ResNet
         medicalnet.add_argument('--model_depth', default=50, type=int, help='Depth of resnet ( 10 | 18 | 34 | 50 | 101 | 152 | 200 )')
         medicalnet.add_argument('--resnet_shortcut', default='B', type=str, help='Shortcut type of resnet ( A | B )')
         medicalnet.add_argument('--input_D',default=56, type=int, help='Input size of depth')
         medicalnet.add_argument('--input_H', default=256, type=int, help='Input size of height')
         medicalnet.add_argument('--input_W', default=256, type=int, help='Input size of width')
-        medicalnet.add_argument('--num_seg_classes', default=2, type=int, help='Number of segmentation classes')
-          # MonAI networks parameters
+        medicalnet.add_argument('--num_seg_classes', default=3, type=int, help='Number of segmentation classes')
+            # MonAI networks parameters
         monainet.add_argument('--model', default='UNet', type=str, help='Which MonAI network, Uppercase sensitive ( UNet | UNetR | SegResNet)')
+            # LSTM 2.5D parameters
+        lstm2d.add_argument('--ckpt_folder', type=str, help='Folder that containss the trained checkpoint to load LSTM 2.5D model')
         
         # dataset parameters
         parser.add_argument('--data_config', required=True, help='path to .yaml file which contains data configuration')

@@ -16,7 +16,7 @@ from torch.optim import lr_scheduler
 import models
 from punkreas import transform, optimizer
 from data import SegmentationDataset, DatasetComposition
-from pretraining_2D.model import LightningSegmentation, LightningClassifierLSTM
+from pretraining_2D.model import LightningSegmentation, LightningClassifierLSTM, LightningSegmentationLSTM
 
 
 
@@ -64,6 +64,25 @@ def get_model(opt):
     elif opt.baseline == 'monainet':
         model = getattr(models,f'{opt.model}')(opt) # create UNet or UNetR from options 
         # for now Monainet options are not specified, rather fixed in module
+    elif opt.baseline == 'lstm2d':
+        device = torch.device('cuda:{}'.format(opt.gpu_ids[0])) if opt.gpu_ids else torch.device('cpu') 
+        ckpt_pth = glob.glob(os.path.join(opt.ckpt_folder, "*.ckpt"))[0]
+        model_info = ckpt_pth.split('/')[-1].split('_')
+        model_architecture = model_info[1]
+        model_name = model_info[2]
+        model = LightningSegmentationLSTM.load_from_checkpoint(
+            ckpt_pth,
+            map_location=device,
+            hparams={},
+            model_architecture=model_architecture,
+            model=model_name,
+            loss_name='dice_cross_entropy',
+            freeze_layers_in_beginning=False,
+            use_imagenet_weights=True,
+        )
+        model = model.to(device)
+        model.eval()
+        return model, None
 
     # initialize model weights
     init_weights(model, init_type=opt.init_type, init_gain=opt.init_gain)
@@ -89,13 +108,18 @@ def get_model(opt):
         # if using pretrained model and new layers are specified
         # add them to new_parameters so that they have higher learning rate
         new_parameters = []
-        for pname, p in model.named_parameters():
-            for layer_name in opt.new_layer_names:
-                if pname.find(layer_name) >= 0:
-                    new_parameters.append(p)
-                    break
+
+        if opt.new_layer_names == ['all']:
+            for pname, p in model.named_parameters():
+                new_parameters.append(p)
+        else:
+            for pname, p in model.named_parameters():
+                for layer_name in opt.new_layer_names:
+                    if pname.find(layer_name) >= 0:
+                        new_parameters.append(p)
+                        break
     else:
-        # without pretrained layers, treat every parameter as new 
+        # without pretrained layers or specifying opt.new_layer_names = 'all', treat every parameter as new 
         new_parameters = []
         for pname, p in model.named_parameters():
             new_parameters.append(p)
@@ -182,12 +206,19 @@ def get_dataloaders(opt):
 
     # Split data into training, validation 
     # save split indices for later use (reproducibility)
-    indices = list(range(len(dataset_composition)))
-    val_split = dataconfig["validation"]["share"]
-    np.random.shuffle(indices)
-    train_indices, val_indices = indices[val_split:], indices[:val_split]
-    np.save(os.path.join(opt.checkpoints_dir,opt.name,'train_idx.npy'),train_indices)
-    np.save(os.path.join(opt.checkpoints_dir,opt.name,'val_idx.npy'),val_indices)
+    if opt.continue_train or not opt.isTrain:
+        train_indices = np.load(os.path.join(opt.checkpoints_dir,opt.name,'train_idx.npy'))
+        val_indices = np.load(os.path.join(opt.checkpoints_dir,opt.name,'val_idx.npy'))
+    else:
+        indices = list(range(len(dataset_composition)))
+        val_split = dataconfig["validation"]["share"]
+        np.random.shuffle(indices)
+        train_indices, val_indices = indices[val_split:], indices[:val_split]
+        #val_indices = train_indices ### overfitting to 1 sample
+        np.save(os.path.join(opt.checkpoints_dir,opt.name,'train_idx.npy'),train_indices)
+        np.save(os.path.join(opt.checkpoints_dir,opt.name,'val_idx.npy'),val_indices)
+    
+    print(f"Training dataset size: {len(train_indices)}   |   Validation dataset size: {len(val_indices)}")
     train_sampler = sampler.SubsetRandomSampler(train_indices)
     val_sampler = sampler.SubsetRandomSampler(val_indices)
    

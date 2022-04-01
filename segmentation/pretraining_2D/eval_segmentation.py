@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 from tqdm import tqdm
 #from segmentation_models_pytorch import Unet
 from segmentation_models_pytorch import utils
-from models import LightningSegmentation
+from model import LightningSegmentation
 
 import sys
 sys.path.append("..")

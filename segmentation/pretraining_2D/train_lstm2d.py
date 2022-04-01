@@ -11,7 +11,7 @@ from torch.utils.data import random_split, DataLoader, sampler
 from pathlib import Path
 from PIL import Image
 from tqdm import tqdm
-from models import LightningClassifierLSTM
+from model import LightningClassifierLSTM, LightningSegmentationLSTM
 from datetime import datetime
 from deepee import ModelSurgeon
 
@@ -22,13 +22,13 @@ from data import SegmentationDataset2D, DatasetComposition
 # %%
 # settings
 dataroot = '/home/erdurc/punkreas/segmentation/datasets/MSD'
-train_resolution = 512
+train_resolution = 256
 batch_size = 4
 model_name = "resnet50"
 model_architecture = "deeplabv3plus"
-loss_name = "cross_entropy"
+loss_name = "dice_cross_entropy"
 convert_to_group_norm = False
-task = 'classification'
+task = 'segmentation'
 assert model_name in [
     "resnet18",
     "resnet34",
@@ -44,25 +44,26 @@ assert model_name in [
     "vgg11_bn",
     "mobilenet_v2",
 ]
-assert loss_name in ["dice", "jaccard", "cross_entropy"]
+assert loss_name in ["dice", "jaccard", "cross_entropy", "dice_cross_entropy"]
 if loss_name == 'cross_entropy':
     assert task == 'classification'
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
 experiment_name = f"{model_architecture}_{model_name}_{task}_lstm_{timestamp}"
 # %%
 # actually unnecessary transformations, as they were done before saving the slices as PNGs
-# so these won't be used now. useful if the dataset has to be recreated again
+# so these won't be used now. useful if the dataset has to be recreated 
 creation_transforms = {
     'Clip': {'amin': -150, 'amax': 250},
     'Normalize': {'bounds': [-150, 250]},
-    #'Resize': {'output_shape': [train_resolution, train_resolution, 'z']}
+    #'Resize': {'output_shape': [train_resolution, train_resolution, 'z']},
+    'ToReferencePosition': {}
                   }
 
 creation_transformations = [
         transform.Compose([getattr(transform,name)(**options) for name,options in creation_transforms.items()])
         ]
 
-augmentations = ['rotate', 'hflip', 'vflip']
+augmentations = {'rotate':[], 'hflip':[], 'vflip':[], 'resize': [train_resolution,train_resolution] }
 
 # %%
 train_indices = np.load('/home/erdurc/punkreas/segmentation/checkpoints/medical_resnet50_pretrain/train_idx.npy')
@@ -70,7 +71,7 @@ val_indices = np.load('/home/erdurc/punkreas/segmentation/checkpoints/medical_re
 train = SegmentationDataset2D(
     dataroot="/home/erdurc/punkreas/segmentation/datasets/MSD",
     creation_transform=creation_transformations[0],
-    #loading_transform=augmentations,
+    loading_transform=augmentations,
     indices_3d=train_indices.tolist(),
     mode=task,
     output_type='sequence',
@@ -79,6 +80,7 @@ train = SegmentationDataset2D(
 val = SegmentationDataset2D(
     dataroot="/home/erdurc/punkreas/segmentation/datasets/MSD",
     creation_transform=creation_transformations[0],
+    loading_transform={'resize': [train_resolution,train_resolution]},
     indices_3d=val_indices.tolist(),
     mode=task,
     output_type='sequence',
@@ -111,12 +113,12 @@ trainer = pl.Trainer(
             monitor="val_loss",
             mode="min",
         ),
-        pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", patience=60),
+        pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", patience=50),
         pl.callbacks.LearningRateMonitor(logging_interval="epoch"),
     ],
     track_grad_norm=2,
     progress_bar_refresh_rate=0,
-    val_check_interval=0.25,
+    val_check_interval=1.0,
     # overfit_batches=1,
     # max_epochs=1,
 )
@@ -145,14 +147,24 @@ hparams = {
     "lr_reduce_patience": 5,
     "lr_reduce_factor": 0.5,
 }
-model = LightningClassifierLSTM(
-    hparams,
-    model_architecture=model_architecture,
-    model=model_name,
-    loss_name=loss_name,
-    freeze_layers_in_beginning=not "monet" in model_name,
-    use_imagenet_weights=True
-)
+if task == 'classification':
+    model = LightningClassifierLSTM(
+        hparams,
+        model_architecture=model_architecture,
+        model=model_name,
+        loss_name=loss_name,
+        freeze_layers_in_beginning=not "monet" in model_name,
+        use_imagenet_weights=True
+    )
+elif task == 'segmentation':
+    model = LightningSegmentationLSTM(
+        hparams,
+        model_architecture=model_architecture,
+        model=model_name,
+        loss_name=loss_name,
+        freeze_layers_in_beginning=not "monet" in model_name,
+        use_imagenet_weights=True
+    )
 # %%
 if convert_to_group_norm:
     surgeon = ModelSurgeon(SurgicalProcedures.BN_to_GN)

@@ -12,7 +12,7 @@ class TestOptions(BaseOptions):
         parser.add_argument('--pretrain_path', default=None)
         # 2D pre-classification model parameters
         parser.add_argument('--no_pre_cropping', action='store_true', help='Do not use 2.5D LSTM classifier to crop scans into a ROI containing pancreas')
-        parser.add_argument('--classifier_weight_folder', type=str, help='Path to the file containing trained weights of 2D pre-classifier.')
+        parser.add_argument('--classifier_weight_folder', type=str, default= "/home/erdurc/punkreas/segmentation/pretraining_2D/models/model_ckpt_deeplabv3plus_resnet50_classification_lstm_2022-04-07_00-53", help='Path to the file containing trained weights of 2D pre-classifier.')
         parser.add_argument('--wind_size_mult_of', type=int, default=16, help='The prediction window of 2D pre-classifier should be a multiple of this.')
         
       

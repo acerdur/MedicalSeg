@@ -59,6 +59,10 @@ class SegmentationDataset(Dataset):
     methods and discards "labels" which are useful for classification, and 
     rather uses "masks".
 
+    IMPORTANT: Due to image loading procedures of punkreas, 3D scans are loaded in 
+    WHD ordering. But the ordering is kept consistent in the pipeline, and documentation 
+    is written in HWD which is more generally used. 
+
     Attributes:
         scans: List of the paths to the medical scan images.
         labels: List of labels corresponding to the scans. Just fed to the class, but will never be used.
@@ -87,13 +91,13 @@ class SegmentationDataset(Dataset):
             label_dtype: Data type of label data.
             masks: Paths to masks corresponding the medical scans.
         """
-
-        if (len(masks) != len(scans)):
-            raise ValueError(
-                "Number of scans and masks does not match! {} != {}".format(
-                    len(scans), len(masks)
+        if masks:
+            if (len(masks) != len(scans)):
+                raise ValueError(
+                    "Number of scans and masks does not match! {} != {}".format(
+                        len(scans), len(masks)
+                    )
                 )
-            )
 
         # Save scans, labels and masks as public attributes
         self.scans = scans
@@ -113,7 +117,7 @@ class SegmentationDataset(Dataset):
             deepcopy(transform) for transform in self._transform._transformations if str(transform) in mask_acceptable_transforms
             ])
             self._transform.prepare(self)
-            self._mask_transform.prepare(self,order=0) # change the interpolation order on mask resizing
+            self._mask_transform.prepare(self,order=0, anti_aliasing=False) # change parameters on mask resizing to retain original values
 
         #import pdb; pdb.set_trace()
     def __len__(self) -> int:
@@ -137,9 +141,12 @@ class SegmentationDataset(Dataset):
 
         # Select the sample
         scan = ScanImage.from_path(self.scans[idx], dtype=self._scan_dtype)
-        mask = MaskImage.from_path(self.masks[idx], dtype=self._label_dtype) 
+        if self.masks:
+            mask = MaskImage.from_path(self.masks[idx], dtype=self._label_dtype) 
+        else:
+            # placeholder for CT dataset which does not have masks
+            mask = MaskImage(array=np.zeros((1,1,1)))
         # segmentation masks are not merged, i.e., loaded as {void, pancreas, tumor} labels
-
 
         #scan_name = self.scans[idx].split('/')[-1]
 
@@ -154,8 +161,8 @@ class SegmentationDataset(Dataset):
 
         #import pdb; pdb.set_trace()
         # Tranform to pytorch tensor
-        torch_scan = scan.to_torch() #.transpose(1,3) # change to DHW format
-        torch_mask = mask.to_torch().to(torch.long) #.transpose(0,2) # change masks back to integer
+        torch_scan = scan.to_torch() # change to DHW format
+        torch_mask = mask.to_torch().to(torch.long) # # change masks back to integer
 
         return torch_scan, torch_mask, self.scans[idx]
 
@@ -172,6 +179,7 @@ class SegmentationDataset2D(Dataset):
         output_type: str = 'single',
         temporal: int = 4,
         is_train: bool = True,
+        return_scan_name: bool = True,
         indices_3d: list = None,
         force_create: bool = False,
     ) -> None:
@@ -198,6 +206,7 @@ class SegmentationDataset2D(Dataset):
         self.output_type = output_type
         self.temporal = temporal
         self.is_train = is_train
+        self.return_scan_name = return_scan_name
         self.merge_masks = merge_masks
 
         if self.mode == 'classification':
@@ -302,7 +311,10 @@ class SegmentationDataset2D(Dataset):
         if self.mode == 'classification':
             torch_mask = SegmentationDataset2D.mask_to_label(torch_mask) # temporal x 1 
         
-        return torch_slice, torch_mask, scan_name
+        if self.return_scan_name:
+            return torch_slice, torch_mask, scan_name
+        else:
+            return torch_slice, torch_mask
 
     @staticmethod
     def get_slice_images(scan, mask):

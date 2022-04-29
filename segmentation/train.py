@@ -21,7 +21,9 @@ from monai.transforms import Compose, AsDiscrete, Activations
 from monai.inferers import sliding_window_inference 
 from monai.data import decollate_batch
 
-def save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score, filename=''):
+from gpu_mem_track import MemTracker
+
+def save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score, monitoring, filename=''):
     model_name = type(model.module).__name__.lower()
     save_dir = os.path.join(opt.checkpoints_dir, opt.name)
     if not filename:
@@ -33,6 +35,7 @@ def save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score, filena
         torch.save({
             'epoch': epoch,
             'best_score': best_score,
+            'monitoring_state': monitoring,
             'state_dict': model.module.cpu().state_dict(),
             'optimizer': optimizer.state_dict(),
             'scheduler': scheduler.state_dict()},
@@ -42,16 +45,20 @@ def save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score, filena
         torch.save({
             'epoch': epoch,
             'best_score': best_score,
+            'monitoring_state': monitoring,
             'state_dict': model.cpu().state_dict(),
             'optimizer': optimizer.state_dict(),
             'scheduler': scheduler.state_dict()},
             save_path)
 
-def load_checkpoints(opt, model, optimizer, scheduler):
+def load_checkpoints(opt, model, optimizer, scheduler,):
     model_name = type(model.module).__name__.lower()
     load_dir = os.path.join(opt.checkpoints_dir, opt.name)
-    load_path = os.path.join(load_dir,f"{model_name}_ckpt_{opt.epoch}.pth")
-
+    if opt.epoch:
+        load_path = os.path.join(load_dir,f"{model_name}_ckpt_{opt.epoch}.pth")
+    else: 
+        load_path = os.path.join(load_dir, 'best_model.pth')
+    
     device = torch.device('cuda:{}'.format(opt.gpu_ids[0])) if opt.gpu_ids else torch.device('cpu') 
     
     
@@ -67,23 +74,23 @@ def load_checkpoints(opt, model, optimizer, scheduler):
     scheduler.load_state_dict(checkpoint['scheduler'])
     best_score = checkpoint['best_score']
     epoch = checkpoint['epoch']
+    monitoring = checkpoint['monitoring_state']
 
     scheduler.step() #update lr from the loaded checkpoint
 
-    return model, optimizer, scheduler, epoch, best_score
+    return model, optimizer, scheduler, epoch, best_score, monitoring
 
 def evaluate(dataloader, model, preclassifier, metric, post_trans_pred, post_trans_lbl, opt):
-    for i, data in enumerate(tqdm(dataloader)):
-        scans, label_masks, scan_paths = data
+    with torch.inference_mode():
+        for i, data in enumerate(tqdm(dataloader)):
+            scans, label_masks, scan_paths = data
 
-        if not opt.no_cuda:
-            scans = scans.cuda()
-            label_masks = label_masks.cuda()
-
+            if not opt.no_cuda:
+                scans = scans.cuda()
+                label_masks = label_masks.cuda()
         
-
-        with torch.no_grad():
-            slice_crop_mask = preclassifier.soft_pred(scans.permute(0,4,1,2,3), window_size_mult_of=opt.wind_size_mult_of).flatten().to(bool)
+            slice_crop_mask, _ = preclassifier.soft_pred(scans.permute(0,4,1,2,3), window_size_mult_of=opt.wind_size_mult_of)
+            slice_crop_mask = slice_crop_mask.to(bool)
             scans, label_masks = scans[:,:,:,:,slice_crop_mask], label_masks[:,:,:,slice_crop_mask]
             
             if not opt.baseline == 'monainet':
@@ -98,13 +105,16 @@ def evaluate(dataloader, model, preclassifier, metric, post_trans_pred, post_tra
             #     predictor=model,
             #     overlap=0,
             # )
+
             preds = [post_trans_pred(pred) for pred in decollate_batch(preds)]
             label_masks = [post_trans_lbl(label_mask) for label_mask in decollate_batch(label_masks)]
             metric(preds, label_masks)
-            
-    metric_per_class = metric.aggregate().flatten()
-    mean_metric= metric_per_class[1:].mean().item()
 
+            del scans, slice_crop_mask, preds
+                
+        metric_per_class = metric.aggregate().flatten()
+        mean_metric= metric_per_class[1:].mean().item()
+    
     return metric_per_class, mean_metric
 
 
@@ -128,14 +138,15 @@ def train(train_loader,
     post_trans_lbl = Compose([AsDiscrete(to_onehot=3)])
 
     if opt.continue_train:
-        model, optimizer, scheduler, current_epoch, best_score = load_checkpoints(opt, model, optimizer, scheduler)
+        model, optimizer, scheduler, current_epoch, best_score, monitoring = load_checkpoints(opt, model, optimizer, scheduler)
         total_iters = batches_per_epoch * current_epoch
     else:
         current_epoch = opt.epoch_count
         total_iters = 0
         best_score = 0.0
+        monitoring = 0
 
-    monitoring = 0
+    
     break_training = False 
 
     log_dir = os.path.join(opt.checkpoints_dir,opt.name,'logs')
@@ -143,6 +154,7 @@ def train(train_loader,
         os.makedirs(log_dir)
     writer = SummaryWriter(log_dir=log_dir)
     
+    #gpu_tracker = MemTracker() 
     model.train()
     train_start_time = time.time()
     for epoch in range(current_epoch, total_epochs + 1):
@@ -165,16 +177,19 @@ def train(train_loader,
 
             #import pdb; pdb.set_trace()
             with torch.no_grad():
-                slice_crop_mask = pre_classifier.soft_pred(scans.permute(0,4,1,2,3), window_size_mult_of=opt.wind_size_mult_of).flatten().to(bool)
+                slice_crop_mask, _ = pre_classifier.soft_pred(scans.permute(0,4,1,2,3), window_size_mult_of=opt.wind_size_mult_of)
+                slice_crop_mask = slice_crop_mask.to(bool)           
             #slice_lbl = torch.any(torch.any(label_masks,dim=1),dim=1).to(int)
+
+            #gpu_tracker.track()
 
             scans = scans[:,:,:,:,slice_crop_mask]
             label_masks = label_masks[:,:,:,slice_crop_mask]
             #import pdb; pdb.set_trace()
 
             if (scans.shape[-1] % opt.wind_size_mult_of) != 0:
-            # in some rare cases (and not happening deterministically always? e.g. happens at epoch 63) 
-            # the window takes the whole scan, which has a shape incompatible with MonAI nets (e.g. 44 when it should be 48)
+            # in some rare cases the window takes the whole scan, 
+            # which has a shape incompatible with MonAI nets (e.g. 44 when it should be 48)
             # apply a small 0 padding trick for compatibility
                 size_diff = int(round(scans.shape[-1] / opt.wind_size_mult_of) * opt.wind_size_mult_of) - scans.shape[-1]
                 scans = torch.nn.functional.pad(scans,(0,size_diff))
@@ -191,40 +206,50 @@ def train(train_loader,
                 print(e)
                 import pdb; pdb.set_trace()
 
-            #import pdb; pdb.set_trace()
+            
+
+            #gpu_tracker.track()
             out_masks, label_masks = prepare_for_loss(opt, out_masks, label_masks)
             #import pdb; pdb.set_trace()
-            loss = loss_fn(out_masks, label_masks)
-            #import pdb; pdb.set_trace()
+            if len(out_masks.shape) == 6:
+                ## deep supervision mode for DynUNet
+                out_masks = torch.unbind(out_masks, dim=1)
+                loss = sum(
+                    0.5 ** i * loss_fn.forward(out, label_masks) for i,out in enumerate(out_masks)
+                )
+            else:
+                loss = loss_fn(out_masks, label_masks)
+            import pdb; pdb.set_trace()
+        
+            del scans, slice_crop_mask, out_masks
 
             loss.backward()
             #import pdb; pdb.set_trace()
             optimizer.step()
             #import pdb; pdb.set_trace()
-
-            
+            #gpu_tracker.track()
 
             if (total_iters == 0) or (total_iters % opt.print_freq == 0):
                 iter_time = (time.time() - iter_start_time)
                 log.info(
                     "Iteration: {} / {} | loss = {:.3f} | iter time = {:.3f}s"\
-                    .format(total_iters,max_num_iters, loss.item(), iter_time))
-                writer.add_scalar("[Train] Train loss", loss.item(), total_iters)
+                    .format(total_iters,max_num_iters, loss.float(), iter_time))
+                writer.add_scalar("[Train] Train loss", loss.float(), total_iters)
                 torch.cuda.empty_cache()
                 #mem = float(torch.cuda.memory_allocated() / (1024 * 1024))
+                #res = float(torch.cuda.memory_reserved() / (1024 * 1024))
                 #print("memory allocated:", mem, "MiB")
+                #print("memory reserved:", res, "MiB")
+                #print(torch.cuda.memory_summary())
 
-                # for obj in gc.get_objects():
-                #     try:
-                #         if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
-                #             print(type(obj), obj.size())
-                #     except:
-                #         pass
+            del loss
 
             if (total_iters % opt.val_freq == 0) and val_loader is not None:
                 metric.reset()
+                model.eval()
                 metric_per_class, mean_metric = evaluate(val_loader, model, pre_classifier, metric, post_trans_pred, post_trans_lbl, opt)
-                
+                model.train()
+
                 [log.info("Val Dice Class {}: {:.4f}".format(i,score.item())) for i,score in enumerate(metric_per_class)]
                 log.info("Val Mean Dice: {:.4f}".format(mean_metric))
                 writer.add_scalar("[Val] Mean Dice", mean_metric, total_iters)
@@ -233,7 +258,7 @@ def train(train_loader,
                 if mean_metric > best_score:
                     best_score = mean_metric
                     monitoring = 0
-                    save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score, filename='best_model.pth')
+                    save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score, monitoring, filename='best_model.pth')
 
                 else:
                     monitoring += 1
@@ -250,11 +275,11 @@ def train(train_loader,
         scheduler.step()
         if epoch % opt.save_epoch_freq == 0:
             log.info(f"Saving checkpoint at the end of epoch {epoch}, total iters {total_iters}")
-            save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score)
+            save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score, monitoring)
 
         log.info(f"End of epoch {epoch} \t Time Taken: {time.time() - epoch_start_time} sec")
     
-    save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score, filename='latest_model.pth')
+    save_checkpoints(opt, model, optimizer, scheduler, epoch, best_score, monitoring, filename='latest_model.pth')
     log.info(f"End of training \t Time Taken: {time.time() - train_start_time} sec")
     
 

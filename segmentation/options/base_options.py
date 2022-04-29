@@ -43,7 +43,7 @@ class BaseOptions():
         medicalnet.add_argument('--input_W', default=256, type=int, help='Input size of width')
         medicalnet.add_argument('--num_seg_classes', default=3, type=int, help='Number of segmentation classes')
             # MonAI networks parameters
-        monainet.add_argument('--model', default='UNet', type=str, help='Which MonAI network, Uppercase sensitive ( UNet | UNetR | SegResNet)')
+        monainet.add_argument('--model', default='UNet', type=str, help='Which MonAI network, Uppercase sensitive ( UNet | SegResNet | VNet)')
             # LSTM 2.5D parameters
         lstm2d.add_argument('--ckpt_folder', type=str, help='Folder that containss the trained checkpoint to load LSTM 2.5D model')
         
@@ -135,6 +135,8 @@ class BaseOptions():
             opt.no_cuda = False
         else:
             opt.no_cuda = True
-
+        
+        opt.inference_mode = False
+        
         self.opt = opt
         return self.opt

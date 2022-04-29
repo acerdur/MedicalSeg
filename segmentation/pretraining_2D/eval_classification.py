@@ -14,12 +14,12 @@ import util
 
 import sys
 sys.path.append("..")
-from data import SegmentationDataset2D, DatasetComposition
+from segmentation.data import SegmentationDataset2D, DatasetComposition
 
 
    
 # %%
-ckpt_name = "/home/erdurc/punkreas/segmentation/pretraining_2D/models/model_ckpt_deeplabv3plus_resnet50_classification_lstm_2022-03-23_15-29/best_deeplabv3plus_resnet50_classification_lstm_2022-03-23_15-29.ckpt"
+ckpt_name = "/home/erdurc/punkreas/segmentation/pretraining_2D/models/model_ckpt_deeplabv3plus_resnet50_classification_lstm_2022-04-07_00-53/best_deeplabv3plus_resnet50_classification_lstm_2022-04-07_00-53.ckpt"
 model_info = ckpt_name.split('/')[-1].split('_')
 model_architecture = model_info[1]
 model_name = model_info[2]
@@ -63,7 +63,7 @@ model.eval()
 # %%
 train_resolution = 512
 
-val_indices = load('/home/erdurc/punkreas/segmentation/checkpoints/medical_resnet50_pretrain/val_idx.npy')
+val_indices = load('/home/erdurc/punkreas/segmentation/datasets/MSD/val_idx.npy')
 val = SegmentationDataset2D(
     dataroot="/home/erdurc/punkreas/segmentation/datasets/MSD",
     creation_transform=None,
@@ -71,7 +71,8 @@ val = SegmentationDataset2D(
     indices_3d=val_indices.tolist(),
     mode='classification',
     output_type= 'sequence' if use_lstm else 'single',
-    is_train=False
+    is_train=False,
+    return_scan_name=False
 )
 
 dataloader = DataLoader(val, batch_size=1, shuffle=False)

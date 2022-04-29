@@ -26,9 +26,9 @@ train_resolution = 256
 batch_size = 4
 model_name = "resnet50"
 model_architecture = "deeplabv3plus"
-loss_name = "dice_cross_entropy"
+loss_name = "cross_entropy"
 convert_to_group_norm = False
-task = 'segmentation'
+task = 'classification'
 assert model_name in [
     "resnet18",
     "resnet34",
@@ -66,8 +66,8 @@ creation_transformations = [
 augmentations = {'rotate':[], 'hflip':[], 'vflip':[], 'resize': [train_resolution,train_resolution] }
 
 # %%
-train_indices = np.load('/home/erdurc/punkreas/segmentation/checkpoints/medical_resnet50_pretrain/train_idx.npy')
-val_indices = np.load('/home/erdurc/punkreas/segmentation/checkpoints/medical_resnet50_pretrain/val_idx.npy')
+train_indices = np.load('/home/erdurc/punkreas/segmentation/datasets/MSD/train_idx.npy')
+val_indices = np.load('/home/erdurc/punkreas/segmentation/datasets/MSD/val_idx.npy')
 train = SegmentationDataset2D(
     dataroot="/home/erdurc/punkreas/segmentation/datasets/MSD",
     creation_transform=creation_transformations[0],
@@ -113,12 +113,12 @@ trainer = pl.Trainer(
             monitor="val_loss",
             mode="min",
         ),
-        pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", patience=50),
+        pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", patience=30),
         pl.callbacks.LearningRateMonitor(logging_interval="epoch"),
     ],
     track_grad_norm=2,
     progress_bar_refresh_rate=0,
-    val_check_interval=1.0,
+    val_check_interval=0.5,
     # overfit_batches=1,
     # max_epochs=1,
 )

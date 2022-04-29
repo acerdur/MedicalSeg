@@ -1,5 +1,5 @@
 import torchvision
-from torch import nn, optim, stack, normal, reshape, cat
+from torch import nn, optim, stack, normal, reshape, cat, where
 from pytorch_lightning import LightningModule
 from segmentation_models_pytorch import (
     Unet,
@@ -606,9 +606,17 @@ class LightningClassifierLSTM(LightningModule):
         out: torch.Tensor   batch_size x seq_len x 2            Class logits for 0,1 (pancreas in / not)
         """
         B,T,C,H,W = x.shape
-        x = self.input_layer(x.view(-1,C,H,W))
-        features = self.encoder(x)
-        seq = self.pre_lstm(features[-1]).view(B,T,-1)
+        seq = []
+        for t in range(T):
+            features = self.input_layer(x[:,t,:,:,:])
+            features = self.encoder(features)
+            slc = self.pre_lstm(features[-1])
+            seq.append(slc.unsqueeze(1))
+        seq = cat(seq, dim=1)
+        ## DEPRECATED & changed to a loop because of high memory usage during inference 
+        # x = self.input_layer(x.view(-1,C,H,W))
+        # features = self.encoder(x)
+        # seq = self.pre_lstm(features[-1]).view(B,T,-1)
         out, states = self.lstm(seq)
         out = self.classification_head(out)
         return states, out
@@ -621,27 +629,32 @@ class LightningClassifierLSTM(LightningModule):
         window_size_mult_of: select from [2,4,8,16] so that the output window of 1s has a length
                               that is multiple of given number
         """
-        lstm_states, output = self(x)
-        preds = output.argmax(dim=2)
-        nonzero_pred_idx = [i for i,x in enumerate(preds[0]) if x != 0 ]
-
-        max_size = preds.shape[1]
-        window_size = (nonzero_pred_idx[-1] - nonzero_pred_idx[0]) + 1
+        lstm_states, preds = self(x)
+        lstm_states = None
+        preds = preds.argmax(dim=2).flatten()
+        zmin, zmax = where(preds)[0][[0,-1]] #[i for i,x in enumerate(preds[0]) if x != 0 ]
+        zmin, zmax = zmin.item(), zmax.item()
+        
+        max_size = preds.shape[0]
+        #import pdb; pdb.set_trace()
+        window_size = preds.sum().item()
         gap = 0
         if window_size_mult_of:
             target_size = window_size_mult_of * ceil(window_size / window_size_mult_of)
             gap = target_size - window_size
         ### mark indices to start & end the window of 1s 
-        start_idx = nonzero_pred_idx[0] - gap // 2
-        end_idx = nonzero_pred_idx[-1] + ((gap // 2) + (gap % 2)) + 1 
+        start_idx = zmin - gap // 2
+        end_idx = zmax + ((gap // 2) + (gap % 2)) + 1
+        if end_idx > max_size:
+            start_idx -= (end_idx - max_size)
         if start_idx < 0:
             end_idx += (-start_idx)  # if the start index exceeds slice limits (below 0), add rest to end_index
-        if end_idx > max_size:
-            start_idx -= (end_idx - max_size) # if end index exceeds limits, add rest of the slices to start
+         # if end index exceeds limits, add rest of the slices to start
         ### most probably the two conditions won't be True at the same time
         ### but be careful with small scans & large window_size_mult_of (e.g. 16)
-        preds[:,max(0,start_idx):min(end_idx,max_size)] = 1
+        preds[max(0,start_idx):min(end_idx,max_size)] = 1
 
+        import pdb; pdb.set_trace()
         return preds, (start_idx, end_idx)
 
     def training_step(self, batch, batch_idx):

@@ -205,18 +205,39 @@ def get_dataloaders(opt):
 
 
     # Split data into training, validation 
-    # save split indices for later use (reproducibility)
+
     if opt.continue_train or not opt.isTrain:
-        train_indices = np.load(os.path.join(opt.checkpoints_dir,opt.name,'train_idx.npy'))
-        val_indices = np.load(os.path.join(opt.checkpoints_dir,opt.name,'val_idx.npy'))
+        train_indices = np.load(os.path.join(opt.checkpoints_dir,opt.name,'train_idx.npy')).astype(int)
+        val_indices = np.load(os.path.join(opt.checkpoints_dir,opt.name,'val_idx.npy')).astype(int)
+    else:
+    # if there is dataset split in dataset directory take them. otherwise create new train-val split
+        train_indices = np.array([],dtype=int)
+        val_indices = np.array([],dtype=int)
+        for pth in dataset_paths:
+            if os.path.exists(os.path.join(pth, "train_idx.npy")) and os.path.exists(os.path.join(pth, "val_idx.npy")):
+                print(f"Found dataset specific train-val split in {pth} \nAppending...")
+                train_indices = np.append(train_indices, np.load(os.path.join(pth, "train_idx.npy"))+len(train_indices))
+                val_indices = np.append(val_indices, np.load(os.path.join(pth, "val_idx.npy"))+len(val_indices))
+                train_indices = train_indices.astype(int)
+                val_indices = val_indices.astype(int)
+            else:
+                print(f"Dataset specific train-val split not found in {pth} \nBuilding the split for the experiment...")
+                train_indices, val_indices = np.array([]), np.array([])
+                break
+            
+    # save split indices for later use (reproducibility)
+    if (len(train_indices) + len(val_indices)) == len(dataset_composition):
+        np.save(os.path.join(opt.checkpoints_dir,opt.name,'train_idx.npy'),train_indices)
+        np.save(os.path.join(opt.checkpoints_dir,opt.name,'val_idx.npy'),val_indices)
     else:
         indices = list(range(len(dataset_composition)))
         val_split = dataconfig["validation"]["share"]
         np.random.shuffle(indices)
         train_indices, val_indices = indices[val_split:], indices[:val_split]
-        #val_indices = train_indices ### overfitting to 1 sample
-        np.save(os.path.join(opt.checkpoints_dir,opt.name,'train_idx.npy'),train_indices)
-        np.save(os.path.join(opt.checkpoints_dir,opt.name,'val_idx.npy'),val_indices)
+        if not opt.inference_mode:
+            ## while inferring, the created indices shouldn't override the training splits
+            np.save(os.path.join(opt.checkpoints_dir,opt.name,'train_idx.npy'),train_indices)
+            np.save(os.path.join(opt.checkpoints_dir,opt.name,'val_idx.npy'),val_indices)
     
     print(f"Training dataset size: {len(train_indices)}   |   Validation dataset size: {len(val_indices)}")
     train_sampler = sampler.SubsetRandomSampler(train_indices)

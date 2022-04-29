@@ -49,7 +49,8 @@ val = SegmentationDataset2D(
     dataroot="/home/erdurc/punkreas/segmentation/datasets/MSD",
     creation_transform=None,
     indices_3d=val_indices.tolist(),
-    mode='segmentation'
+    mode='segmentation',
+    return_scan_name = False
 )
 
 dataloader = DataLoader(val, batch_size=1, shuffle=False)

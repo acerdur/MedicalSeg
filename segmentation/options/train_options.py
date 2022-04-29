@@ -29,7 +29,7 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--n_epochs', type=int, default=60, help='number of epochs with the initial learning rate')
         parser.add_argument('--n_epochs_decay', type=int, default=60, help='number of epochs to linearly decay learning rate to zero (linear policy)')
         parser.add_argument('--loss_function', type=str, default='dice_cross_entropy', help='Loss function to use ( cross_entropy | dice | dice_cross_entropy')
-        parser.add_argument('--optimizer', type=str, default='Adam', help='Which optimizer to use ( SGD | Adam | AdamW )')
+        parser.add_argument('--optimizer', type=str, default='AdamW', help='Which optimizer to use ( SGD | Adam | AdamW )')
         parser.add_argument('--betas', nargs='+' ,type=float, default=[0.9, 0.99], help='Momentum values for optimizer.')
         parser.add_argument('--lr', type=float, default=0.001, help='initial learning rate for new parameters')
         parser.add_argument('--weight_decay', type=float, default=1e-5, help='weight decay for optimizers')

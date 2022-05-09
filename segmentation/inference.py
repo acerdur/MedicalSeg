@@ -18,6 +18,7 @@ def main(loader, model, preclassifier, opt):
     #post_trans_pred = Compose([AsDiscrete(argmax=True, to_onehot=3)]) #[Activations(sigmoid=True), AsDiscrete(threshold=0.5)])
     to_onehot = Compose([AsDiscrete(to_onehot=3)])
 
+    opt.name = "lstm2d_classifier"
     if opt.save_results:
         results_dir = os.path.join('./results', opt.name)
         os.makedirs(results_dir, exist_ok=True)
@@ -45,6 +46,8 @@ def main(loader, model, preclassifier, opt):
                     #useful for padding while saving preds later on
                     cropped_top = 0 + window_indices[0]
                     cropped_bottom = scans.shape[-1] - window_indices[1]
+                    preds = torch.zeros_like(scans)
+                    preds[:,:,:,:,slice_crop_mask] = 1
                     scans = scans[:,:,:,:,slice_crop_mask]
                 except:
                     print(f"LSTM classifier couldn't find pancreas on scan: {scan_paths[0].split('/')[-1]}")
@@ -55,28 +58,28 @@ def main(loader, model, preclassifier, opt):
             if not opt.baseline == 'monainet':
                 scans = scans.permute(0,1,4,2,3) # B x 1 x D x H x W 
 
-            if opt.baseline == 'lstm2d':
-                scans = scans.permute(0,2,1,3,4) # B x D x 1 x H x W
-           
             try:
-                _, preds = model(scans)
+                # if opt.baseline == 'lstm2d':
+                #     scans = scans.permute(0,2,1,3,4) # B x D x 1 x H x W
+                #     _, preds = model(scans)
+                #     preds = preds.permute(0,2,3,4,1) # to B x 3 x H x W x D
+                # else:
+                #     preds = model(scans)
+                   
+                # scans = None 
+                # slice_crop_mask = None
 
-                if opt.baseline == 'lstm2d':
-                    preds = preds.permute(0,2,3,4,1) # to B x 3 x H x W x D
-
-                scans = None 
-                slice_crop_mask = None
-            
-                preds = preds.argmax(dim=1,keepdim=True)
-                preds = torch.nn.functional.pad(preds,(cropped_top, cropped_bottom),mode='constant',value=0)
+                # preds = preds.argmax(dim=1,keepdim=True)
+                # preds = torch.nn.functional.pad(preds,(cropped_top, cropped_bottom),mode='constant',value=0)
                 preds = [to_onehot(pred) for pred in decollate_batch(preds)]
                 pred_dict = {scan_paths[0]: preds[0]}
                 
                 if not opt.no_postprocessing:
                     preds = [postprocessing(pred) for pred in preds]
                     pred_dict_post = {f"{scan_paths[0]}_post": preds[0]}
-            except:
+            except Exception as e:
                 print(f"3D Model couldn't find pancreas/tumor on scan: {scan_paths[0].split('/')[-1]}")
+                print(e)
                 with open(os.path.join(results_dir, f'{timestamp}_failed_scans.txt'), 'a') as f:
                     f.write(f"{scan_paths[0]}\tError source: 3D model \n")
                 continue

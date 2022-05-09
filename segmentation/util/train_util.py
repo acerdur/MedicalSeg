@@ -191,7 +191,7 @@ def get_dataloaders(opt):
 
     dataconfig = dataconfig['data'] # dump other categories if given and reduce one level of nest
     dataset_paths = [ os.path.abspath(pth) for pth in dataconfig['datasets']]
-
+    import pdb; pdb.set_trace()
     # Configure transformations
     transformations = [
         transform.Compose([getattr(transform,name)(**options) for name,options in dataconfig['transform'].items()])

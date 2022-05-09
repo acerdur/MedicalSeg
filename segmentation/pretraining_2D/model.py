@@ -637,7 +637,7 @@ class LightningClassifierLSTM(LightningModule):
         
         max_size = preds.shape[0]
         #import pdb; pdb.set_trace()
-        window_size = preds.sum().item()
+        window_size = zmax - zmin + 1
         gap = 0
         if window_size_mult_of:
             target_size = window_size_mult_of * ceil(window_size / window_size_mult_of)
@@ -654,7 +654,6 @@ class LightningClassifierLSTM(LightningModule):
         ### but be careful with small scans & large window_size_mult_of (e.g. 16)
         preds[max(0,start_idx):min(end_idx,max_size)] = 1
 
-        import pdb; pdb.set_trace()
         return preds, (start_idx, end_idx)
 
     def training_step(self, batch, batch_idx):

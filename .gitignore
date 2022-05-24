@@ -1,0 +1,7 @@
+datasets/
+*/__pycache__
+config
+pretraining_2D/models
+results/
+*.sh
+*.pyc

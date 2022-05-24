@@ -63,6 +63,28 @@ class Precision(nn.Module):
 
         return (tp + self.eps) / (tp + fp + self.eps)
 
+class Recall(nn.Module):
+
+    __name__ = 'rec'
+
+    def __init__(self, use_lstm=True, eps=1-5):
+        super().__init__()
+        self.use_lstm = use_lstm
+        self.eps = eps
+    
+    def forward(self, inputs, target):
+        _, pred = inputs
+        target = target.flatten()
+        if self.use_lstm:
+            pred = pred.view(-1,pred.shape[-1])
+
+        pred = pred.argmax(dim=1).flatten()
+        tp = torch.sum(pred * target) # num true positive preds
+        pos = target.sum() # num all real positives 
+
+        return (tp + self.eps) / (pos + self.eps)
+
+
 class SoftPredIoU(nn.Module):
 
     __name__ = ''

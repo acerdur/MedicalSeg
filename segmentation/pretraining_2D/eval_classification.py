@@ -2,6 +2,7 @@
 from torchvision import transforms
 from numpy import asarray, stack, load
 import torch
+import random
 #import torch.nn as nn
 from torch.cuda import is_available
 from torch.utils.data import DataLoader
@@ -19,7 +20,7 @@ from segmentation.data import SegmentationDataset2D, DatasetComposition
 
    
 # %%
-ckpt_name = "/home/erdurc/punkreas/segmentation/pretraining_2D/models/model_ckpt_deeplabv3plus_resnet50_classification_lstm_2022-04-07_00-53/best_deeplabv3plus_resnet50_classification_lstm_2022-04-07_00-53.ckpt"
+ckpt_name = "/home/erdurc/punkreas/segmentation/pretraining_2D/models/model_ckpt_deeplabv3plus_resnet50_classification_lstm_2022-05-10_16-46/best_deeplabv3plus_resnet50_classification_lstm_2022-05-10_16-46.ckpt"
 model_info = ckpt_name.split('/')[-1].split('_')
 model_architecture = model_info[1]
 model_name = model_info[2]
@@ -61,13 +62,16 @@ model.eval()
 # model.load_state_dict(model_dict)
 
 # %%
-train_resolution = 512
+train_resolution = 256
+std = random.uniform(5.0,15.0) ** 0.5 # imitating the Albumentations GaussNoise
+augmentations = {'rotate':[], 'hflip':[], 'vflip':[], 'resize': [train_resolution,train_resolution], 'GaussianNoise': {'mean':0, 'std': std} }
+
 
 val_indices = load('/home/erdurc/punkreas/segmentation/datasets/MSD/val_idx.npy')
 val = SegmentationDataset2D(
     dataroot="/home/erdurc/punkreas/segmentation/datasets/MSD",
     creation_transform=None,
-    loading_transform={'resize': [256,256]},
+    loading_transform= {'resize': [256,256]},
     indices_3d=val_indices.tolist(),
     mode='classification',
     output_type= 'sequence' if use_lstm else 'single',
@@ -75,7 +79,7 @@ val = SegmentationDataset2D(
     return_scan_name=False
 )
 
-dataloader = DataLoader(val, batch_size=1, shuffle=False)
+dataloader = DataLoader(val, batch_size=1, shuffle=False, num_workers=0)
 aa = next(iter(dataloader))
 import pdb; pdb.set_trace()
 # %%
@@ -83,7 +87,7 @@ import pdb; pdb.set_trace()
 test_epoch = utils.train.ValidEpoch(
     model=model,
     loss=util.CrossEntropy(use_lstm=use_lstm),
-    metrics=[util.Accuracy(use_lstm=use_lstm), util.Precision(use_lstm=use_lstm)],
+    metrics=[util.Accuracy(use_lstm=use_lstm), util.Precision(use_lstm=use_lstm), util.Recall(use_lstm=use_lstm)],
     device=device,
 )
 # %%

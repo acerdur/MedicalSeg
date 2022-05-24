@@ -613,8 +613,8 @@ class LightningClassifierLSTM(LightningModule):
             slc = self.pre_lstm(features[-1])
             seq.append(slc.unsqueeze(1))
         seq = cat(seq, dim=1)
-        ## DEPRECATED & changed to a loop because of high memory usage during inference 
-        # x = self.input_layer(x.view(-1,C,H,W))
+        ## DEPRECATED & changed to a loop because of high memory usage 
+        # x = self.input_layer(x.view(-1,C,H,W))s
         # features = self.encoder(x)
         # seq = self.pre_lstm(features[-1]).view(B,T,-1)
         out, states = self.lstm(seq)
@@ -643,8 +643,8 @@ class LightningClassifierLSTM(LightningModule):
             target_size = window_size_mult_of * ceil(window_size / window_size_mult_of)
             gap = target_size - window_size
         ### mark indices to start & end the window of 1s 
-        start_idx = zmin - gap // 2
-        end_idx = zmax + ((gap // 2) + (gap % 2)) + 1
+        start_idx = zmin - (gap // 2 + (gap % 2))
+        end_idx = zmax + (gap // 2) + 1
         if end_idx > max_size:
             start_idx -= (end_idx - max_size)
         if start_idx < 0:
@@ -654,7 +654,7 @@ class LightningClassifierLSTM(LightningModule):
         ### but be careful with small scans & large window_size_mult_of (e.g. 16)
         preds[max(0,start_idx):min(end_idx,max_size)] = 1
 
-        return preds, (start_idx, end_idx)
+        return preds, (max(0,start_idx), min(end_idx,max_size))
 
     def training_step(self, batch, batch_idx):
         data, target, _ = batch
@@ -671,18 +671,18 @@ class LightningClassifierLSTM(LightningModule):
         return loss
     
     def configure_optimizers(self):
-        if self.use_imagenet:
-            other_params = [param for name,param in self.named_parameters() if 'encoder' not in name]
-            param_groups = [
-                { 'params': self.encoder.parameters(), 'lr': self.hparams.lr/10 },
-                { 'params': other_params, 'lr': self.hparams.lr }
-            ]
-            optimizer = optim.Adam(param_groups)
-        else:
-            optimizer = optim.Adam(self.parameters(), lr=self.hparams.lr)
-        optimizer = optim.Adam(self.parameters(), lr=self.hparams.lr)
+        # if self.use_imagenet:
+        #     other_params = [param for name,param in self.named_parameters() if 'encoder' not in name]
+        #     param_groups = [
+        #         { 'params': self.encoder.parameters(), 'lr': self.hparams.lr/10, 'weight_decay': self.hparams.weight_decay },
+        #         { 'params': other_params, 'lr': self.hparams.lr , 'weight_decay': self.hparams.weight_decay}
+        #     ]
+        #     optimizer = optim.AdamW(param_groups)
+        # else:
+        #     optimizer = optim.AdamW(self.parameters(), lr=self.hparams.lr,)#weight_decay=self.hparams.weight_decay)
+        optimizer = optim.Adam(self.parameters(), lr=self.hparams.lr, )#weight_decay=self.hparams.weight_decay)
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", patience=2, factor=0.5
+            optimizer, mode="min", patience=5, factor=0.5
         )
         return {
             "optimizer": optimizer,

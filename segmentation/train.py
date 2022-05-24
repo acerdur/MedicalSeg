@@ -83,37 +83,40 @@ def load_checkpoints(opt, model, optimizer, scheduler,):
 def evaluate(dataloader, model, preclassifier, metric, post_trans_pred, post_trans_lbl, opt):
     with torch.inference_mode():
         for i, data in enumerate(tqdm(dataloader)):
-            scans, label_masks, scan_paths = data
+            scans, label_masks, scan_paths, extra_info = data
+            # if 'CropToMask' in extra_info:
+            #     cropped_top = extra_info['CropToMask'][-1][0].item()
+            #     cropped_bottom = extra_info['CropToMask'][-1][1].item()
+            # else:
+            #     cropped_top=0
+            #     cropped_bottom=0
 
             if not opt.no_cuda:
                 scans = scans.cuda()
                 label_masks = label_masks.cuda()
         
-            slice_crop_mask, _ = preclassifier.soft_pred(scans.permute(0,4,1,2,3), window_size_mult_of=opt.wind_size_mult_of)
-            slice_crop_mask = slice_crop_mask.to(bool)
-            scans, label_masks = scans[:,:,:,:,slice_crop_mask], label_masks[:,:,:,slice_crop_mask]
+            # slice_crop_mask, _ = preclassifier.soft_pred(scans.permute(0,4,1,2,3), window_size_mult_of=opt.wind_size_mult_of)
+            # slice_crop_mask = slice_crop_mask.to(bool)
+            # scans, label_masks = scans[:,:,:,:,slice_crop_mask], label_masks[:,:,:,slice_crop_mask]
             
             if not opt.baseline == 'monainet':
                 scans = scans.permute(0,1,4,2,3)
                 label_masks = label_masks.permute(0,3,1,2)
             
             preds, label_masks = model.module.inference(scans, label_masks)
-            # preds = sliding_window_inference(
-            #     inputs=scans,
-            #     roi_size=(512,512,256),
-            #     sw_batch_size=1,
-            #     predictor=model,
-            #     overlap=0,
-            # )
-
+            #preds = preds.argmax(dim=1,keepdim=True)
+            #preds = torch.nn.functional.pad(preds,(cropped_top, cropped_bottom),mode='constant',value=0)
             preds = [post_trans_pred(pred) for pred in decollate_batch(preds)]
             label_masks = [post_trans_lbl(label_mask) for label_mask in decollate_batch(label_masks)]
             metric(preds, label_masks)
 
-            del scans, slice_crop_mask, preds
+            del scans 
+            del preds 
+            del label_masks
                 
         metric_per_class = metric.aggregate().flatten()
         mean_metric= metric_per_class[1:].mean().item()
+        metric.reset()
     
     return metric_per_class, mean_metric
 
@@ -138,15 +141,16 @@ def train(train_loader,
     post_trans_lbl = Compose([AsDiscrete(to_onehot=3)])
 
     if opt.continue_train:
-        model, optimizer, scheduler, current_epoch, best_score, monitoring = load_checkpoints(opt, model, optimizer, scheduler)
-        total_iters = batches_per_epoch * current_epoch
+        model, optimizer, scheduler, last_epoch, best_score, monitoring = load_checkpoints(opt, model, optimizer, scheduler)
+        total_iters = batches_per_epoch * last_epoch
+        current_epoch = last_epoch + 1
     else:
-        current_epoch = opt.epoch_count
+        current_epoch = 1
         total_iters = 0
         best_score = 0.0
         monitoring = 0
 
-    
+    import pdb; pdb.set_trace()
     break_training = False 
 
     log_dir = os.path.join(opt.checkpoints_dir,opt.name,'logs')
@@ -166,8 +170,9 @@ def train(train_loader,
 
         for batch_id, batch_data in enumerate(train_loader):
             iter_start_time = time.time()
-            scans, label_masks, scan_paths = batch_data
-
+            scans, label_masks, scan_paths, _ = batch_data
+            # when using CropToMask with lstm_classifier outputs; scan and mask are loaded cropped
+            
             total_iters += 1
             epoch_iter += 1
 
@@ -176,16 +181,14 @@ def train(train_loader,
                 label_masks = label_masks.cuda()
 
             #import pdb; pdb.set_trace()
-            with torch.no_grad():
-                slice_crop_mask, _ = pre_classifier.soft_pred(scans.permute(0,4,1,2,3), window_size_mult_of=opt.wind_size_mult_of)
-                slice_crop_mask = slice_crop_mask.to(bool)           
-            #slice_lbl = torch.any(torch.any(label_masks,dim=1),dim=1).to(int)
+            # MOVED into dataset preprocessing
+            # with torch.no_grad():
+            #     slice_crop_mask, _ = pre_classifier.soft_pred(scans.permute(0,4,1,2,3), window_size_mult_of=opt.wind_size_mult_of)
+            #     slice_crop_mask = slice_crop_mask.to(bool)           
+            # #slice_lbl = torch.any(torch.any(label_masks,dim=1),dim=1).to(int)
 
-            #gpu_tracker.track()
-
-            scans = scans[:,:,:,:,slice_crop_mask]
-            label_masks = label_masks[:,:,:,slice_crop_mask]
-            #import pdb; pdb.set_trace()
+            # scans = scans[:,:,:,:,slice_crop_mask]
+            # label_masks = label_masks[:,:,:,slice_crop_mask]
 
             if (scans.shape[-1] % opt.wind_size_mult_of) != 0:
             # in some rare cases the window takes the whole scan, 
@@ -206,8 +209,6 @@ def train(train_loader,
                 print(e)
                 import pdb; pdb.set_trace()
 
-            
-
             #gpu_tracker.track()
             out_masks, label_masks = prepare_for_loss(opt, out_masks, label_masks)
             #import pdb; pdb.set_trace()
@@ -219,9 +220,10 @@ def train(train_loader,
                 )
             else:
                 loss = loss_fn(out_masks, label_masks)
-            import pdb; pdb.set_trace()
+            #import pdb; pdb.set_trace()
         
-            del scans, slice_crop_mask, out_masks
+            del scans
+            del out_masks
 
             loss.backward()
             #import pdb; pdb.set_trace()
@@ -245,7 +247,6 @@ def train(train_loader,
             del loss
 
             if (total_iters % opt.val_freq == 0) and val_loader is not None:
-                metric.reset()
                 model.eval()
                 metric_per_class, mean_metric = evaluate(val_loader, model, pre_classifier, metric, post_trans_pred, post_trans_lbl, opt)
                 model.train()
@@ -291,7 +292,7 @@ if __name__ == '__main__':
     #setup
     opt = TrainOptions().parse()
     model, parameters = get_model(opt)
-    pre_classifier = get_pre_classifier(opt)
+    pre_classifier = None #get_pre_classifier(opt)
     optimizer = get_optimizer(opt, parameters)
     scheduler = get_scheduler(opt, optimizer)
     loss_fn = get_loss(opt)

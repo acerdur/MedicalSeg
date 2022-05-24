@@ -15,10 +15,9 @@ from evaluate_segmentation import save_to_nifti, load_checkpoints, postprocessin
 
 def main(loader, model, preclassifier, opt):
 
-    #post_trans_pred = Compose([AsDiscrete(argmax=True, to_onehot=3)]) #[Activations(sigmoid=True), AsDiscrete(threshold=0.5)])
     to_onehot = Compose([AsDiscrete(to_onehot=3)])
 
-    opt.name = "lstm2d_classifier"
+    #opt.name = "lstm2d_classifier"
     if opt.save_results:
         results_dir = os.path.join('./results', opt.name)
         os.makedirs(results_dir, exist_ok=True)
@@ -27,8 +26,7 @@ def main(loader, model, preclassifier, opt):
 
     with torch.inference_mode():
         for i, data in enumerate(tqdm(loader)):
-            scans, _ , scan_paths = data # B x 1 x H x W x D scans ; B x H x W x D 
-            _ = None
+            scans, _ , scan_paths, _ = data # B x 1 x H x W x D scans ; B x H x W x D 
 
             #import pdb; pdb.set_trace()
 
@@ -46,8 +44,6 @@ def main(loader, model, preclassifier, opt):
                     #useful for padding while saving preds later on
                     cropped_top = 0 + window_indices[0]
                     cropped_bottom = scans.shape[-1] - window_indices[1]
-                    preds = torch.zeros_like(scans)
-                    preds[:,:,:,:,slice_crop_mask] = 1
                     scans = scans[:,:,:,:,slice_crop_mask]
                 except:
                     print(f"LSTM classifier couldn't find pancreas on scan: {scan_paths[0].split('/')[-1]}")
@@ -59,18 +55,18 @@ def main(loader, model, preclassifier, opt):
                 scans = scans.permute(0,1,4,2,3) # B x 1 x D x H x W 
 
             try:
-                # if opt.baseline == 'lstm2d':
-                #     scans = scans.permute(0,2,1,3,4) # B x D x 1 x H x W
-                #     _, preds = model(scans)
-                #     preds = preds.permute(0,2,3,4,1) # to B x 3 x H x W x D
-                # else:
-                #     preds = model(scans)
+                if opt.baseline == 'lstm2d':
+                    scans = scans.permute(0,2,1,3,4) # B x D x 1 x H x W
+                    _, preds = model(scans)
+                    preds = preds.permute(0,2,3,4,1) # to B x 3 x H x W x D
+                else:
+                    preds = model(scans)
                    
-                # scans = None 
-                # slice_crop_mask = None
+                scans = None 
+                slice_crop_mask = None
 
-                # preds = preds.argmax(dim=1,keepdim=True)
-                # preds = torch.nn.functional.pad(preds,(cropped_top, cropped_bottom),mode='constant',value=0)
+                preds = preds.argmax(dim=1,keepdim=True)
+                preds = torch.nn.functional.pad(preds,(cropped_top, cropped_bottom),mode='constant',value=0)
                 preds = [to_onehot(pred) for pred in decollate_batch(preds)]
                 pred_dict = {scan_paths[0]: preds[0]}
                 

@@ -9,7 +9,7 @@ import numpy as np
 #from skimage.transform import resize
 from scipy import ndimage
 from torch.nn import init
-from torch.utils.data import DataLoader, random_split, sampler
+from torch.utils.data import Subset, DataLoader, random_split, sampler
 from typing import Mapping, Optional, Union
 from torch.optim import lr_scheduler
 
@@ -190,13 +190,23 @@ def get_dataloaders(opt):
         dataconfig = yaml.full_load(yaml_file)
 
     dataconfig = dataconfig['data'] # dump other categories if given and reduce one level of nest
-    dataset_paths = [ os.path.abspath(pth) for pth in dataconfig['datasets']]
-    import pdb; pdb.set_trace()
-    # Configure transformations
-    transformations = [
-        transform.Compose([getattr(transform,name)(**options) for name,options in dataconfig['transform'].items()])
-        for _ in range(len(dataset_paths))
-        ]
+    dataset_paths = [os.path.abspath(pth) for pth in dataconfig['datasets']]
+
+     # Configure transformations
+    transformations = []
+    for name, options in dataconfig["transform"].items():
+        if name == "Augmentations":
+            # a nested list of all albumentations in "options"
+            if not opt.inference_mode:
+                for albu in options:
+                    [[name1, options1]] = albu.items()
+                    transformations.append(getattr(transform, name1)(**options1))
+            else:
+                pass
+        else:
+            transformations.append(getattr(transform, name)(**options))
+    transformations = [transform.Compose(transformations) for _ in range(len(dataset_paths))]
+
     # Create dataset composition from all datasets
     dataset_composition = DatasetComposition([
         SegmentationDataset.from_compressed_folder(dataset_folder, transformations[i]) 
@@ -206,7 +216,7 @@ def get_dataloaders(opt):
 
     # Split data into training, validation 
 
-    if opt.continue_train or not opt.isTrain:
+    if (opt.continue_train or not opt.isTrain) and not opt.inference_mode:
         train_indices = np.load(os.path.join(opt.checkpoints_dir,opt.name,'train_idx.npy')).astype(int)
         val_indices = np.load(os.path.join(opt.checkpoints_dir,opt.name,'val_idx.npy')).astype(int)
     else:
@@ -226,44 +236,43 @@ def get_dataloaders(opt):
                 break
             
     # save split indices for later use (reproducibility)
-    if (len(train_indices) + len(val_indices)) == len(dataset_composition):
+    if ((len(train_indices) + len(val_indices)) == len(dataset_composition)) and not opt.inference_mode:
         np.save(os.path.join(opt.checkpoints_dir,opt.name,'train_idx.npy'),train_indices)
         np.save(os.path.join(opt.checkpoints_dir,opt.name,'val_idx.npy'),val_indices)
     else:
-        indices = list(range(len(dataset_composition)))
+        indices = np.arange(len(dataset_composition))
         val_split = dataconfig["validation"]["share"]
         np.random.shuffle(indices)
         train_indices, val_indices = indices[val_split:], indices[:val_split]
+        train_indices = np.array([0]) if len(train_indices) == 0 else train_indices ## placeholder for inference so that dataloader doesn't give error 
         if not opt.inference_mode:
             ## while inferring, the created indices shouldn't override the training splits
             np.save(os.path.join(opt.checkpoints_dir,opt.name,'train_idx.npy'),train_indices)
             np.save(os.path.join(opt.checkpoints_dir,opt.name,'val_idx.npy'),val_indices)
     
     print(f"Training dataset size: {len(train_indices)}   |   Validation dataset size: {len(val_indices)}")
-    train_sampler = sampler.SubsetRandomSampler(train_indices)
-    val_sampler = sampler.SubsetRandomSampler(val_indices)
+    #train_sampler = sampler.SubsetRandomSampler(train_indices)
+    #val_sampler = sampler.SubsetRandomSampler(val_indices)
+    train_set = Subset(dataset_composition, train_indices)
+    val_set = Subset(dataset_composition, val_indices)
    
-    # train_data, val_data = random_split(
-    #     dataset_composition,
-    #     [
-    #         dataconfig["training"]["share"],
-    #         dataconfig["validation"]["share"],
-    #     ],
-    # )
-
+    [dataset.update_val_index(val_indices.tolist()) for dataset in dataset_composition._datasets]   
+    
     # Configure dataloaders
     train_loader: Optional[DataLoader] = DataLoader(
-        dataset_composition,
+        train_set,
         batch_size=dataconfig["training"]["batch_size"],
         num_workers=opt.num_workers,
-        sampler=train_sampler
+        shuffle=dataconfig["training"]["shuffle"]
+        #sampler=train_sampler
     )
     if dataconfig["validation"]["share"]:
         val_loader: Optional[DataLoader] = DataLoader(
-            dataset_composition,
+            val_set,
             batch_size=dataconfig["validation"]["batch_size"],
             num_workers=opt.num_workers,
-            sampler=val_sampler
+            shuffle=dataconfig["validation"]["shuffle"]
+            #sampler=val_sampler
         )
     else:
         val_loader = None

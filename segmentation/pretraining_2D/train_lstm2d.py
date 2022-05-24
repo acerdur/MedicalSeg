@@ -3,6 +3,7 @@ from deepee.surgery import SurgicalProcedures
 import pytorch_lightning as pl
 import torchvision
 import sys
+import random
 import numpy as np
 from numpy import float32 as npfloat32
 from torch import nn, float32 as torchfloat32, optim, save
@@ -14,6 +15,7 @@ from tqdm import tqdm
 from model import LightningClassifierLSTM, LightningSegmentationLSTM
 from datetime import datetime
 from deepee import ModelSurgeon
+from pytorch_lightning.utilities.seed import seed_everything
 
 from punkreas import transform
 sys.path.append("..")
@@ -21,6 +23,8 @@ from data import SegmentationDataset2D, DatasetComposition
 
 # %%
 # settings
+seed_everything(0,workers=True)
+
 dataroot = '/home/erdurc/punkreas/segmentation/datasets/MSD'
 train_resolution = 256
 batch_size = 4
@@ -63,7 +67,8 @@ creation_transformations = [
         transform.Compose([getattr(transform,name)(**options) for name,options in creation_transforms.items()])
         ]
 
-augmentations = {'rotate':[], 'hflip':[], 'vflip':[], 'resize': [train_resolution,train_resolution] }
+std = random.uniform(5.0,15.0) ** 0.5 # imitating the Albumentations GaussNoise
+augmentations = {'rotate':[], 'hflip':[], 'vflip':[], 'resize': [train_resolution,train_resolution], } #'GaussianNoise': {'mean':0, 'std': std} }
 
 # %%
 train_indices = np.load('/home/erdurc/punkreas/segmentation/datasets/MSD/train_idx.npy')
@@ -113,7 +118,7 @@ trainer = pl.Trainer(
             monitor="val_loss",
             mode="min",
         ),
-        pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", patience=30),
+        pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", patience=20),
         pl.callbacks.LearningRateMonitor(logging_interval="epoch"),
     ],
     track_grad_norm=2,
@@ -146,6 +151,7 @@ hparams = {
     "unfreeze_epochs": 3,
     "lr_reduce_patience": 5,
     "lr_reduce_factor": 0.5,
+    "weight_decay": 1e-4
 }
 if task == 'classification':
     model = LightningClassifierLSTM(

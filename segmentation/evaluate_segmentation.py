@@ -122,23 +122,30 @@ def evaluate(dataloader, model, preclassifier, metrics, post_trans_pred, post_tr
     all_preds_processed = {}
     with torch.inference_mode():
         for i, data in enumerate(tqdm(dataloader)):
-            scans, label_masks, scan_paths = data # B x 1 x H x W x D scans ; B x H x W x D label_masks
+            scans, label_masks, scan_paths, extra_info = data # B x 1 x H x W x D scans ; B x H x W x D label_masks
+
+            if 'CropToMask' in extra_info:
+                cropped_top = extra_info['CropToMask'][-1][0].item()
+                cropped_bottom = extra_info['CropToMask'][-1][1].item()
+            else:
+                cropped_top=0
+                cropped_bottom=0
 
             if not opt.no_cuda:
                 scans = scans.cuda()
                 label_masks = label_masks.cuda()
 
-            cropped_top = 0
-            cropped_bottom = 0
+            # cropped_top = 0
+            # cropped_bottom = 0
 
-            if not opt.no_pre_cropping:
-                slice_crop_mask, window_indices = preclassifier.soft_pred(scans.permute(0,4,1,2,3), window_size_mult_of=opt.wind_size_mult_of)
-                slice_crop_mask = slice_crop_mask.to(bool)
-                #useful for padding while saving preds later on
-                cropped_top += window_indices[0]
-                cropped_bottom = scans.shape[-1] - window_indices[1]
-                #import pdb; pdb.set_trace()
-                scans = scans[:,:,:,:,slice_crop_mask]#, label_masks[:,:,:,slice_crop_mask]
+            # if not opt.no_pre_cropping:
+            #     slice_crop_mask, window_indices = preclassifier.soft_pred(scans.permute(0,4,1,2,3), window_size_mult_of=opt.wind_size_mult_of)
+            #     slice_crop_mask = slice_crop_mask.to(bool)
+            #     #useful for padding while saving preds later on
+            #     cropped_top += window_indices[0]
+            #     cropped_bottom = scans.shape[-1] - window_indices[1]
+            #     #import pdb; pdb.set_trace()
+            #     scans = scans[:,:,:,:,slice_crop_mask]#, label_masks[:,:,:,slice_crop_mask]
             
                 
             if not opt.baseline == 'monainet':
@@ -150,7 +157,6 @@ def evaluate(dataloader, model, preclassifier, metrics, post_trans_pred, post_tr
             
             preds, label_masks = model.inference(scans, label_masks)
             
-            #import pdb; pdb.set_trace()
             #preds = [post_trans_pred(pred) for pred in decollate_batch(preds)]
             preds = preds.argmax(dim=1,keepdim=True)
            
@@ -174,7 +180,6 @@ def evaluate(dataloader, model, preclassifier, metrics, post_trans_pred, post_tr
 
 def save_to_nifti(preds, results_dir, opt):
     """
-    Resize not implemented yet
     preds:  Dict of predictions provided by evaluate()
             Items should have {scan_path: predictions} form
     """
@@ -184,6 +189,8 @@ def save_to_nifti(preds, results_dir, opt):
     for scan_pth, pred in preds.items():
         #original_scan = nib.load(scan_pth.split('_')[0])
         original_scan = sitk.ReadImage(scan_pth.split('_')[0])
+        original_scan = np.swapaxes(np.array(sitk.GetArrayFromImage(original_scan),dtype=np.float32),0,2)
+        original_shape = original_scan.shape[:-1]
         name = scan_pth.split('/')[-1].split('.')[0] 
         name = name + "_post" if "_post" in scan_pth else name
         dataset_name = scan_pth.split('/')[-3]
@@ -226,7 +233,7 @@ if __name__ == '__main__':
     for metric in metrics:
         print(metric.__name__)
         metric_per_class = metric.aggregate().flatten() 
-        mean_metric = metric_per_class.mean().item() 
+        mean_metric = metric_per_class[1:].mean().item() 
         [log.info("Val Dice Class {}: {:.4f}".format(i,score.item())) for i,score in enumerate(metric_per_class)]
         log.info("Val Mean Dice: {:.4f}".format(mean_metric))
 

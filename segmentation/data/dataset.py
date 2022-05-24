@@ -11,8 +11,9 @@ from copy import deepcopy
 
 import numpy as np
 import torch
-import torchvision
+from torchvision.transforms import ToTensor, InterpolationMode
 import torchvision.transforms.functional as TF
+#from albumentations import GaussNoise
 
 from punkreas.data import Dataset
 from punkreas.data import ScanImage, MaskImage
@@ -32,8 +33,8 @@ def random_transform_image_and_mask(img, mask, transforms: [Optional[dict]]):
     else:
         if 'resize' in transforms.keys():
             new_size = transforms['resize']
-            img = TF.resize(img, size=new_size, interpolation=torchvision.transforms.InterpolationMode.BILINEAR)
-            mask = TF.resize(mask, size=new_size, interpolation=torchvision.transforms.InterpolationMode.NEAREST)
+            img = TF.resize(img, size=new_size, interpolation=InterpolationMode.BILINEAR)
+            mask = TF.resize(mask, size=new_size, interpolation=InterpolationMode.NEAREST)
 
         if ('hflip' in transforms.keys()) and (random.random() > 0.5):
             img = TF.hflip(img)
@@ -45,9 +46,18 @@ def random_transform_image_and_mask(img, mask, transforms: [Optional[dict]]):
 
         if ('rotate' in transforms.keys()) and (random.random() > 0.5):
             angle = random.randint(-90,90)
-            img = TF.rotate(img, angle=angle, interpolation=torchvision.transforms.InterpolationMode.BILINEAR)
-            mask = TF.rotate(mask, angle=angle, interpolation=torchvision.transforms.InterpolationMode.NEAREST)
+            img = TF.rotate(img, angle=angle, interpolation=InterpolationMode.BILINEAR)
+            mask = TF.rotate(mask, angle=angle, interpolation=InterpolationMode.NEAREST)
 
+        if ('gaussiannoise' in transforms.keys()) and (random.random() > 0.5):
+            valrange = [img.min().item(), img.max().item()]
+            mean, std = transforms['gaussiannoise']['mean'], transforms['gaussiannoise']['std']
+            img = torch.clamp(img + torch.randn(img.size()) * std + mean, *valrange)
+        
+        if ('multiplicativenoise' in transforms.keys()) and (random.random() > 0.5):
+            alpha = random.uniform(**transforms['multiplicativenoise'])
+            img = torch.clamp(alpha * img, *valrange)
+        
         return img, mask
 
     
@@ -76,7 +86,8 @@ class SegmentationDataset(Dataset):
         transform: "Transform" = None,
         scan_dtype: Type[Any] = np.float32,
         label_dtype: Type[Any] = np.int64,
-        masks: Union[list[str], None] = None,
+        crop_masks: Union[list[str], None] = None,
+        target_masks: Union[list[str], None] = None,
     ) -> None:
         """Create a medical image classification dataset from scans and labels.
 
@@ -91,17 +102,24 @@ class SegmentationDataset(Dataset):
             label_dtype: Data type of label data.
             masks: Paths to masks corresponding the medical scans.
         """
-        if masks:
-            if (len(masks) != len(scans)):
-                raise ValueError(
-                    "Number of scans and masks does not match! {} != {}".format(
-                        len(scans), len(masks)
-                    )
+        if (crop_masks is not None) and (len(crop_masks) != len(scans)):
+            raise ValueError(
+                "Number of scans and masks does not match! {} != {}".format(
+                    len(scans), len(crop_masks)
                 )
+            )
+
+        if (target_masks is not None) and (len(target_masks) != len(scans)):
+            raise ValueError(
+                "Number of scans and masks does not match! {} != {}".format(
+                    len(scans), len(target_masks)
+                )
+            )
 
         # Save scans, labels and masks as public attributes
         self.scans = scans
-        self.masks = masks
+        self.crop_masks = crop_masks
+        self.target_masks = target_masks
 
         # Save transformation and dtypes as private attribute
         self._transform = transform
@@ -109,17 +127,27 @@ class SegmentationDataset(Dataset):
         self._label_dtype = label_dtype
 
         # Filter transformations for mask images ang generate compose class
-        mask_acceptable_transforms = ['Resize', 'Pad', 'Crop', 'ToReferencePosition'] # crop class does not exist yet - necessary?
+        #mask_acceptable_transforms = ['Resize', 'Pad', 'Crop', 'ToReferencePosition'] # crop class does not exist yet - necessary?
         
         # Prepare transformation instances on the dataset
         if self._transform:
-            self._mask_transform = Compose([ 
-            deepcopy(transform) for transform in self._transform._transformations if str(transform) in mask_acceptable_transforms
-            ])
+            # self._mask_transform = Compose([ 
+            # deepcopy(transform) for transform in self._transform._transformations if str(transform) in mask_acceptable_transforms
+            # ])
             self._transform.prepare(self)
-            self._mask_transform.prepare(self,order=0, anti_aliasing=False) # change parameters on mask resizing to retain original values
+            # self._mask_transform.prepare(self,order=0, anti_aliasing=False) # change parameters on mask resizing to retain original values
+        
+        self._val_idx = []
+        self._val_transform = None
 
-        #import pdb; pdb.set_trace()
+    def update_val_index(self, val_idx: list) -> None:
+
+        self._val_idx = val_idx
+        self._val_transform = Compose([
+            transform for transform in self._transform._transformations if str(transform) != 'Albumentation'
+        ])
+        self._val_transform.prepare(self)#crop_target_mask=False)
+
     def __len__(self) -> int:
         """Get the size of the dataset.
 
@@ -141,30 +169,28 @@ class SegmentationDataset(Dataset):
 
         # Select the sample
         scan = ScanImage.from_path(self.scans[idx], dtype=self._scan_dtype)
-        if self.masks:
-            mask = MaskImage.from_path(self.masks[idx], dtype=self._label_dtype) 
+        if self.target_masks:
+            mask = MaskImage.from_path(self.target_masks[idx], dtype=self._label_dtype) 
         else:
             # placeholder for CT dataset which does not have masks
             mask = MaskImage(array=np.zeros((1,1,1)))
         # segmentation masks are not merged, i.e., loaded as {void, pancreas, tumor} labels
 
-        #scan_name = self.scans[idx].split('/')[-1]
 
         # Apply transformation to scan & mask images
-        if self._transform:
-            self._transform(scan, idx)
-            self._mask_transform(mask, idx)
-
-        # integrated into punkreas transforms
-        #scan.array = SegmentationDataset2D.rotate_and_flip(scan.array)
-        #mask.array = SegmentationDataset2D.rotate_and_flip(mask.array) 
+        if idx in self._val_idx and self._val_transform:
+            transform_outs = self._val_transform(scan, idx, mask)
+        elif self._transform:
+            transform_outs = self._transform(scan, idx, mask)
+            #self._mask_transform(mask, idx)
 
         #import pdb; pdb.set_trace()
         # Tranform to pytorch tensor
         torch_scan = scan.to_torch() # change to DHW format
         torch_mask = mask.to_torch().to(torch.long) # # change masks back to integer
+        transform_outs = {k:v for k,v in transform_outs.items() if v is not None}
 
-        return torch_scan, torch_mask, self.scans[idx]
+        return torch_scan, torch_mask, self.scans[idx], transform_outs
 
     
 
@@ -232,7 +258,7 @@ class SegmentationDataset2D(Dataset):
         if self._load_transfrom:
             self._load_transfrom = {k.lower():v for k,v in self._load_transfrom.items()}
             for t in self._load_transfrom.keys():
-                assert t in ['rotate', 'hflip', 'vflip', 'resize']
+                assert t in ['rotate', 'hflip', 'vflip', 'resize', 'gaussiannoise']
 
         self.scan_paths, self.mask_paths, self.scan_names = SegmentationDataset2D.create_2d_dataset(self.dataroot, [self._transform3d, self._mask_transform3d], force=force_create, indices=indices_3d)
         
@@ -291,15 +317,17 @@ class SegmentationDataset2D(Dataset):
 
         if self.output_type == 'single':
             img, mask = Image.open(slice_path), Image.open(mask_path)
-            torch_slice = torchvision.transforms.ToTensor()(img) # 1 x H x W
-            torch_mask = torchvision.transforms.ToTensor()(mask) # # 1 x H x W
+            torch_slice = ToTensor()(img) # 1 x H x W
+            torch_mask = ToTensor()(mask) # # 1 x H x W
             scan_name = slice_path.split('/')[-1].split('_')[0]
         else:
-            imgs = [torchvision.transforms.ToTensor()(Image.open(pth)) for pth in slice_path]
-            masks = [torchvision.transforms.ToTensor()(Image.open(pth)) for pth in mask_path]
+            imgs = [ToTensor()(Image.open(pth)) for pth in slice_path]
+            masks = [ToTensor()(Image.open(pth)) for pth in mask_path]
             torch_slice = torch.cat(imgs,dim=0).unsqueeze(1) # temporal x 1 x H x W
             torch_mask = torch.cat(masks,dim=0) # temporal x H x W
             scan_name = slice_path[0].split('/')[-1].split('_')[0]
+
+        import pdb; pdb.set_trace()
         
         torch_mask = torch.round(torch_mask*2).to(int)
 
@@ -375,7 +403,7 @@ class SegmentationDataset2D(Dataset):
     @classmethod
     def create_2d_dataset(cls, dataroot, transforms=None, force=False, max_number_scans=float("inf"), indices=None):
         """
-        Take the 3D scans and save each slice as a 1-channel .jpg with the folder structure:
+        Take the 3D scans and save each slice as a 1-channel .jpg with the filename structure:
         <scan_id>_slice<slice_id>.jpg
 
         Arguments: 

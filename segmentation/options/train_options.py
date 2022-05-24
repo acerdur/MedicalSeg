@@ -15,7 +15,7 @@ class TrainOptions(BaseOptions):
 
         # 2D pre-classification model parameters
         parser.add_argument('--no_pre_cropping', action='store_true', help='Do not use 2.5D LSTM classifier to crop scans into a ROI containing pancreas')
-        parser.add_argument('--classifier_weight_folder', type=str, help='Path to the file containing trained weights of 2D pre-classifier.')
+        parser.add_argument('--classifier_weight_folder', type=str, default="/home/erdurc/punkreas/segmentation/pretraining_2D/models/model_ckpt_deeplabv3plus_resnet50_classification_lstm_2022-05-10_15-22", help='Path to the file containing trained weights of 2D pre-classifier.')
         parser.add_argument('--wind_size_mult_of', type=int, default=16, help='The prediction window of 2D pre-classifier should be a multiple of this.')
         
         # network saving and loading parameters
@@ -32,7 +32,7 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--optimizer', type=str, default='AdamW', help='Which optimizer to use ( SGD | Adam | AdamW )')
         parser.add_argument('--betas', nargs='+' ,type=float, default=[0.9, 0.99], help='Momentum values for optimizer.')
         parser.add_argument('--lr', type=float, default=0.001, help='initial learning rate for new parameters')
-        parser.add_argument('--weight_decay', type=float, default=1e-5, help='weight decay for optimizers')
+        parser.add_argument('--weight_decay', type=float, default=1e-4, help='weight decay for optimizers')
         parser.add_argument('--lr_policy', type=str, default='linear', help='learning rate policy. [linear | step | plateau | cosine]')
         parser.add_argument('--lr_decay_iters', type=int, default=50, help='multiply by a gamma every lr_decay_iters iterations (step policy)')
         parser.add_argument('--val_freq', type=int, default=250, help='Validation frequency by iteration')

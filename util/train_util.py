@@ -8,6 +8,7 @@ import glob
 import numpy as np
 #from skimage.transform import resize
 from scipy import ndimage
+from sklearn.model_selection import train_test_split
 from torch.nn import init
 from torch.utils.data import Subset, DataLoader, random_split, sampler
 from typing import Mapping, Optional, Union
@@ -241,10 +242,15 @@ def get_dataloaders(opt):
         np.save(os.path.join(opt.checkpoints_dir,opt.name,'val_idx.npy'),val_indices)
     else:
         indices = np.arange(len(dataset_composition))
-        val_split = dataconfig["validation"]["share"]
-        np.random.shuffle(indices)
-        train_indices, val_indices = indices[val_split:], indices[:val_split]
-        train_indices = np.array([0]) if len(train_indices) == 0 else train_indices ## placeholder for inference so that dataloader doesn't give error 
+        train_indices, val_indices = train_test_split(
+            indices, 
+            train_size=dataconfig["training"]["share"], 
+            test_size=dataconfig["validation"]["share"],
+            random_state=42)
+        #val_split = dataconfig["validation"]["share"]
+        #np.random.shuffle(indices)
+        #train_indices, val_indices = indices[val_split:], indices[:val_split]
+        #train_indices = np.array([0]) if len(train_indices) == 0 else train_indices ## placeholder for inference so that dataloader doesn't give error 
         if not opt.inference_mode:
             ## while inferring, the created indices shouldn't override the training splits
             np.save(os.path.join(opt.checkpoints_dir,opt.name,'train_idx.npy'),train_indices)

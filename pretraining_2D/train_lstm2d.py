@@ -25,7 +25,7 @@ from data import SegmentationDataset2D, DatasetComposition
 # settings
 seed_everything(0,workers=True)
 
-dataroot = '/home/erdurc/punkreas/segmentation/datasets/MSD'
+dataroot = '/home/erdurc/MedicalSeg/datasets/MSD' #TODO: add your dataset folder
 train_resolution = 256
 batch_size = 4
 model_name = "resnet50"
@@ -71,10 +71,10 @@ std = random.uniform(5.0,15.0) ** 0.5 # imitating the Albumentations GaussNoise
 augmentations = {'rotate':[], 'hflip':[], 'vflip':[], 'resize': [train_resolution,train_resolution], } #'GaussianNoise': {'mean':0, 'std': std} }
 
 # %%
-train_indices = np.load('/home/erdurc/punkreas/segmentation/datasets/MSD/train_idx.npy')
-val_indices = np.load('/home/erdurc/punkreas/segmentation/datasets/MSD/val_idx.npy')
+train_indices = np.load('/home/erdurc/MedicalSeg/datasets/MSD/train_idx.npy')
+val_indices = np.load('/home/erdurc/MedicalSeg/datasets/MSD/val_idx.npy')
 train = SegmentationDataset2D(
-    dataroot="/home/erdurc/punkreas/segmentation/datasets/MSD",
+    dataroot=dataroot,
     creation_transform=creation_transformations[0],
     loading_transform=augmentations,
     indices_3d=train_indices.tolist(),
@@ -83,7 +83,7 @@ train = SegmentationDataset2D(
     temporal=4,
 )
 val = SegmentationDataset2D(
-    dataroot="/home/erdurc/punkreas/segmentation/datasets/MSD",
+    dataroot=dataroot,
     creation_transform=creation_transformations[0],
     loading_transform={'resize': [train_resolution,train_resolution]},
     indices_3d=val_indices.tolist(),

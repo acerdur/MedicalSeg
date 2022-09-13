@@ -14,13 +14,13 @@ from model import LightningClassifierLSTM, LightningSegmentation
 import util
 
 import sys
-sys.path.append("..")
-from segmentation.data import SegmentationDataset2D, DatasetComposition
+sys.path.append("...")
+from ..data import SegmentationDataset2D, DatasetComposition
 
 
    
 # %%
-ckpt_name = "/home/erdurc/punkreas/segmentation/pretraining_2D/models/model_ckpt_deeplabv3plus_resnet50_classification_lstm_2022-05-10_16-46/best_deeplabv3plus_resnet50_classification_lstm_2022-05-10_16-46.ckpt"
+ckpt_name = "" #TODO: add model ckpt path
 model_info = ckpt_name.split('/')[-1].split('_')
 model_architecture = model_info[1]
 model_name = model_info[2]
@@ -67,9 +67,9 @@ std = random.uniform(5.0,15.0) ** 0.5 # imitating the Albumentations GaussNoise
 augmentations = {'rotate':[], 'hflip':[], 'vflip':[], 'resize': [train_resolution,train_resolution], 'GaussianNoise': {'mean':0, 'std': std} }
 
 
-val_indices = load('/home/erdurc/punkreas/segmentation/datasets/MSD/val_idx.npy')
+val_indices = load('/home/erdurc/MedicalSeg/datasets/MSD/val_idx.npy') #TODO: load your validation set indices from numpy
 val = SegmentationDataset2D(
-    dataroot="/home/erdurc/punkreas/segmentation/datasets/MSD",
+    dataroot="/home/erdurc/MedicalSeg/datasets/MSD", #TODO: add your dataset folder
     creation_transform=None,
     loading_transform= {'resize': [256,256]},
     indices_3d=val_indices.tolist(),

@@ -5,3 +5,5 @@ pretraining_2D/models
 results/
 *.sh
 *.pyc
+checkpoints/
+*/*logs

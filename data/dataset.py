@@ -12,6 +12,7 @@ from copy import deepcopy
 import numpy as np
 import torch
 from torchvision.transforms import ToTensor, InterpolationMode
+from skimage.transform import resize
 import torchvision.transforms.functional as TF
 #from albumentations import GaussNoise
 
@@ -32,9 +33,13 @@ def random_transform_image_and_mask(img, mask, transforms: [Optional[dict]]):
         return img, mask
     else:
         if 'resize' in transforms.keys():
-            new_size = transforms['resize']
-            img = TF.resize(img, size=new_size, interpolation=InterpolationMode.BILINEAR)
-            mask = TF.resize(mask, size=new_size, interpolation=InterpolationMode.NEAREST)
+            new_size = [img.shape[0], *transforms['resize']]
+            ## same resizing as in punkreas package, so that values are same
+            img_numpy = img.permute(1,0,2,3).squeeze(0).numpy()
+            img_numpy = resize(img_numpy,output_shape=new_size,anti_aliasing=True,preserve_range=True)
+            img = torch.from_numpy(img_numpy).unsqueeze(1)
+            #img = TF.resize(img, size=new_size, interpolation=InterpolationMode.BILINEAR)
+            mask = TF.resize(mask, size=transforms['resize'], interpolation=InterpolationMode.NEAREST)
 
         if ('hflip' in transforms.keys()) and (random.random() > 0.5):
             img = TF.hflip(img)
@@ -88,6 +93,7 @@ class SegmentationDataset(Dataset):
         label_dtype: Type[Any] = np.int64,
         crop_masks: Union[list[str], None] = None,
         target_masks: Union[list[str], None] = None,
+        *args,
     ) -> None:
         """Create a medical image classification dataset from scans and labels.
 
@@ -184,7 +190,6 @@ class SegmentationDataset(Dataset):
             transform_outs = self._transform(scan, idx, mask)
             #self._mask_transform(mask, idx)
 
-        #import pdb; pdb.set_trace()
         # Tranform to pytorch tensor
         torch_scan = scan.to_torch() # change to DHW format
         torch_mask = mask.to_torch().to(torch.long) # # change masks back to integer
@@ -327,8 +332,6 @@ class SegmentationDataset2D(Dataset):
             torch_mask = torch.cat(masks,dim=0) # temporal x H x W
             scan_name = slice_path[0].split('/')[-1].split('_')[0]
 
-        import pdb; pdb.set_trace()
-        
         torch_mask = torch.round(torch_mask*2).to(int)
 
         torch_slice, torch_mask = random_transform_image_and_mask(torch_slice, torch_mask, self._load_transfrom)
@@ -412,8 +415,9 @@ class SegmentationDataset2D(Dataset):
             force:      bool    flag to create dataset again even if it exists
             indices:    list    index of 3D scans to be used only 
         """
-        scan_paths_3d = glob.glob(os.path.join(dataroot, "scans", "*"))
-        mask_paths_3d = glob.glob(os.path.join(dataroot, "masks", "*"))
+        scan_paths_3d = sorted(glob.glob(os.path.join(dataroot, "scans", "*")))
+        mask_paths_3d = sorted(glob.glob(os.path.join(dataroot, "target_masks", "*")))
+
         if indices:
             scan_paths_3d = [scan_paths_3d[i] for i in indices]
             mask_paths_3d = [mask_paths_3d[i] for i in indices]
